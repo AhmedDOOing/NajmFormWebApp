@@ -118,6 +118,81 @@ use the seed script / curl below.
 npm run seed         # mints one demo report and prints the two links + dashboard
 ```
 
+## Hamsa webhook handoff
+
+Point Hamsa at `POST /api/hamsa/webhook`. The endpoint accepts extracted variables from
+common payload locations such as `variables`, `extractedVariables`, `data.variables`,
+`outcome.variables`, or each item in `outcomes`.
+
+Important: Hamsa should capture **Party A / caller-side information only**. The webhook
+always stores those values in `prefill.A` and leaves `prefill.B` empty, so Party B enters
+and consents to their own details during the handover flow. If Hamsa captures
+`other_party_mobile`, it is stored as Party A's `otherPartyMobile` and can be used only as
+the handover identity check target; it does not pre-fill Party B's form.
+
+Set `NAJM_HAMSA_WEBHOOK_SECRET` in production and send either
+`Authorization: Bearer <secret>` or `x-hamsa-secret: <secret>`.
+
+```bash
+curl -s -X POST http://localhost:3000/api/hamsa/webhook \
+  -H 'content-type: application/json' \
+  -d '{
+    "variables": {
+      "party_a_full_name": "محمد عبدالله القحطاني",
+      "party_a_national_id": "1023456789",
+      "party_a_mobile": "0551234567",
+      "party_a_plate": "أ ب ج 4821",
+      "party_a_make_model": "تويوتا كامري",
+      "party_a_insurance_status": "valid",
+      "accident_city": "الرياض",
+      "accident_type": "اصطدام خلفي",
+      "vehicles_involved": 2,
+      "injuries": false,
+      "other_party_status": "present",
+      "other_party_mobile": "0509876543",
+      "language": "ar"
+    }
+  }'
+```
+
+Variables to ask Hamsa to capture:
+
+| Variable | Prefills |
+|---|---|
+| `party_a_full_name` | Party A full name |
+| `party_a_national_id` | Party A national / iqama ID |
+| `party_a_mobile` | Party A mobile |
+| `party_a_nationality` | Party A nationality |
+| `party_a_licence_no` | Party A licence number |
+| `party_a_licence_expiry` | Party A licence expiry date |
+| `party_a_not_owner` | Whether Party A is not the vehicle owner |
+| `party_a_owner_name` | Vehicle owner name |
+| `party_a_plate` | Party A vehicle plate |
+| `party_a_make_model` | Party A vehicle make/model |
+| `party_a_year` | Party A vehicle year |
+| `party_a_colour` | Party A vehicle colour |
+| `party_a_vehicle_type` | `private`, `commercial`, `rental`, `government`, or `motorcycle` |
+| `party_a_registration_status` | `valid` or `expired` |
+| `party_a_insurance_status` | `valid`, `expired`, `none`, or `unknown` |
+| `party_a_insurer` | Insurance company |
+| `party_a_policy_no` | Insurance policy number |
+| `party_a_coverage_type` | Coverage type |
+| `accident_city` | Accident city |
+| `accident_district` | Accident district |
+| `accident_landmark` | Accident landmark |
+| `accident_lat` / `accident_lng` | Accident coordinates, if Hamsa has them |
+| `accident_location_label` | Human-readable accident location |
+| `accident_date` | Accident date |
+| `accident_type` | Accident type |
+| `vehicles_involved` | Number of vehicles |
+| `accident_description` | Short incident description |
+| `damage_location` | Damage location on Party A's vehicle |
+| `damage_severity` | `minor`, `moderate`, or `severe` |
+| `injuries` | `true` / `false` |
+| `other_party_status` | `present`, `fled`, `parked`, or `none` |
+| `other_party_mobile` | Optional Party A-provided other-party mobile for handover verification only |
+| `language` | `ar` or `en` language hint |
+
 ## Simulate the voice agent (exact curl)
 
 Party A's prefill is rich (captured on the call); Party B's is minimal (they never spoke
@@ -167,6 +242,7 @@ Response:
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/api/session` | Voice agent mints report + two slugs → returns two short URLs. |
+| `POST` | `/api/hamsa/webhook` | Hamsa Party-A-only extracted-variable webhook → maps variables to prefill and returns two short URLs. |
 | `GET`  | `/r/:slug` | Opaque slug → SSR form for that report+party with `prefill` injected. Expired/unknown → recovery page (never a raw 404). |
 | `POST` | `/api/report/:reportId/party/:party/submit` | Validates token↔report↔party, stores answers, computes edge-case flags, broadcasts over the socket. Body: `{ slug, answers }`. |
 | `GET`  | `/api/report/:reportId` | Status + flags + presence + audit trail (agent/dashboard). |
@@ -217,10 +293,12 @@ src/lib/
   schema.ts                   zod: session + submit payloads
   realtime.ts                 in-memory presence store, grace/SLA timers, io bridge
   socketContract.ts           typed Socket.IO events
+  hamsa.ts                    Hamsa Party-A-only outcome variable mapper
   i18n.ts                     Arabic (primary, RTL) / English strings
 src/app/
   page.tsx                    demo landing ("simulate the voice agent")
   api/session/route.ts        POST /api/session
+  api/hamsa/webhook/route.ts  POST /api/hamsa/webhook
   api/report/[reportId]/...   status + submit routes
   r/[slug]/page.tsx           SSR slug resolver → form (or recovery page)
   dashboard/[reportId]/...    live presence + flags (agent/demo view)

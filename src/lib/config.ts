@@ -3,6 +3,10 @@
 export const HOST_BASE_URL =
   process.env.NAJM_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
 
+// Optional shared secret for POST /api/hamsa/webhook. If unset, the webhook is
+// open for local demos. In prod, set it and send Authorization: Bearer <secret>.
+export const HAMSA_WEBHOOK_SECRET = process.env.NAJM_HAMSA_WEBHOOK_SECRET;
+
 // How long a freshly minted link stays valid (ms). Voice agent can override via ttl.
 export const DEFAULT_LINK_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 

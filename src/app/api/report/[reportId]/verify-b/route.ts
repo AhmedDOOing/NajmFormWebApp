@@ -54,13 +54,17 @@ export async function POST(
   const bLink = getLinkForParty(params.reportId, "B");
   if (!bLink) return NextResponse.json({ error: "no party B on report" }, { status: 404 });
   const bPrefill = JSON.parse(bLink.prefill) as Prefill;
+  const aPrefill = JSON.parse(aLink.prefill) as Prefill;
 
-  // Match B's full captured mobile number (fallback: their plate).
+  // Match B's full captured mobile number. Hamsa only captures Party A's side,
+  // so use A's "other party mobile" as the handover verification target when
+  // B's own prefill is intentionally empty. Fallback: B plate if present.
   const at = new Date().toISOString();
   let target: string;
   let supplied: string;
-  if (bPrefill.mobile) {
-    target = normalizeMobile(bPrefill.mobile);
+  const mobileTarget = bPrefill.mobile ?? aPrefill.otherPartyMobile;
+  if (mobileTarget) {
+    target = normalizeMobile(mobileTarget);
     supplied = normalizeMobile(parsed.data.value);
   } else {
     // No mobile on file — fall back to matching the plate digits, if any.
