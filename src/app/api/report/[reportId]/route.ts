@@ -21,6 +21,7 @@ export async function GET(
   return NextResponse.json({
     reportId: report.reportId,
     status: report.status,
+    phase: report.phase,
     flags,
     routing: routeOutcome(flags),
     presence: getPresence(params.reportId),

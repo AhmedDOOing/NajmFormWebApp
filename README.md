@@ -67,6 +67,35 @@ licensed face, register it with `next/font/local` and point `--font-brand` at it
 Google font stays as the fallback. Accessibility: visible `:focus-visible` outlines, tap
 targets ≥ 44px, and `prefers-reduced-motion` disables the pulsing location halo.
 
+## Single-device handover (primary path)
+
+The primary flow is **one phone, one continuous session, sequential** — not two links
+syncing live. Party A opens their link and it drives the whole thing:
+
+```
+Language gate → Party A fills → [LOCK & HANDOVER] → [B identity check] → Party B fills → submit
+```
+
+- **A fills** their part, then hits a hard **"hand the phone to the other driver"** screen.
+- **A's zone locks** — enforced **server-side** (the submit endpoint returns `423` for any
+  Party A edit once `report.phase != 'partyA'`), not just hidden.
+- A light **B-identity check** (last 4 digits of B's captured mobile) gates entry to B's
+  zone; B's statement/consent are **never pre-filled** and are inaccessible until it passes.
+  Retry N → `PARTY_B_UNVERIFIED` → escalate (existing handling).
+- **B fills** their part (can flag `SHARED_DISPUTE`) → submit → same completion + routing.
+- **"The other driver isn't here"** branch → one-sided report (`PARTY_B_TIMEOUT`) + hands
+  back B's remote link to send.
+- **Resume**: reopening A's link after handover resumes in the B phase with A locked — it
+  never reopens A's editable form. State lives in `report.phase`
+  (`partyA → handover → partyB → complete`); handover + verify events are timestamped in the
+  audit trail.
+
+The two-link + Socket.IO presence path stays as the **remote fallback** (Party B's own link
+still works, unchanged) — the single-device path doesn't depend on it.
+
+Endpoints: `POST /handover`, `POST /verify-b`, `POST /absent` (all authorized by A's slug),
+plus the `423` A-lock guard on the submit route.
+
 ## Stack
 
 - **Next.js 14 (App Router, TypeScript)** — frontend + API routes + SSR form page.

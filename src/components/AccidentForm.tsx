@@ -23,6 +23,7 @@ export default function AccidentForm({
   initialFlags,
   alreadySubmitted,
   initialLang,
+  onComplete,
 }: {
   reportId: string;
   party: Party;
@@ -31,6 +32,10 @@ export default function AccidentForm({
   initialFlags: string[];
   alreadySubmitted: boolean;
   initialLang: Lang;
+  // When set (single-device Party A), the orchestrator takes over after a
+  // successful submit (to run the handover) instead of showing the terminal
+  // "submitted" screen.
+  onComplete?: (party: Party) => void;
 }) {
   // Language is chosen at the gate (or restored from the cookie) and passed in.
   // The in-form header toggle can still change it afterward.
@@ -201,7 +206,13 @@ export default function AccidentForm({
         return;
       }
       setStatus("submitted");
-      setSubmitted(true);
+      if (onComplete) {
+        // Single-device Party A: hand control to the orchestrator (handover)
+        // instead of showing the terminal screen.
+        onComplete(party);
+      } else {
+        setSubmitted(true);
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -448,6 +459,19 @@ export default function AccidentForm({
               <label>{t.statementOptional}</label>
               <textarea value={a.statement ?? ""} onChange={(e) => set("statement", e.target.value)} />
             </div>
+            {party === "B" && (
+              <label
+                style={{ display: "flex", gap: 10, alignItems: "flex-start", margin: "10px 0", cursor: "pointer" }}
+              >
+                <input
+                  type="checkbox"
+                  checked={!!a.sharedDispute}
+                  onChange={(e) => set("sharedDispute", e.target.checked)}
+                  style={{ width: 20, height: 20, marginTop: 2, flexShrink: 0 }}
+                />
+                <span style={{ fontSize: 14 }}>{t.disputeLabel}</span>
+              </label>
+            )}
             <p className="muted">{t.consentNote}</p>
             {error && <p style={{ color: "var(--critical)" }}>{error}</p>}
           </>

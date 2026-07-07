@@ -1,7 +1,14 @@
 import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
-import type { LinkRow, Party, PartyLocation, ReportRow, ReportStatus } from "./types";
+import type {
+  LinkRow,
+  Party,
+  PartyLocation,
+  Phase,
+  ReportRow,
+  ReportStatus,
+} from "./types";
 
 // ---------------------------------------------------------------------------
 // Local dev persistence. For prod, swap:
@@ -88,6 +95,19 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_audit_report ON audit(reportId);
 `);
 
+// --- lightweight migrations (add columns to pre-existing DBs) --------------
+// Single-device handover state lives on the report: `phase` drives the zone
+// edit-locks (partyA -> handover -> partyB -> complete); `verifyAttempts`
+// tracks Party-B identity retries.
+{
+  const cols = db.prepare(`PRAGMA table_info(report)`).all() as { name: string }[];
+  const has = (n: string) => cols.some((c) => c.name === n);
+  if (!has("phase"))
+    db.exec(`ALTER TABLE report ADD COLUMN phase TEXT NOT NULL DEFAULT 'partyA'`);
+  if (!has("verifyAttempts"))
+    db.exec(`ALTER TABLE report ADD COLUMN verifyAttempts INTEGER NOT NULL DEFAULT 0`);
+}
+
 // --- report ---------------------------------------------------------------
 
 export function insertReport(r: {
@@ -109,6 +129,21 @@ export function getReport(reportId: string): ReportRow | undefined {
 
 export function setReportStatus(reportId: string, status: ReportStatus): void {
   db.prepare(`UPDATE report SET status = ? WHERE reportId = ?`).run(status, reportId);
+}
+
+export function setPhase(reportId: string, phase: Phase): void {
+  db.prepare(`UPDATE report SET phase = ? WHERE reportId = ?`).run(phase, reportId);
+}
+
+// Increments and returns the new Party-B verification attempt count.
+export function incVerifyAttempts(reportId: string): number {
+  db.prepare(
+    `UPDATE report SET verifyAttempts = verifyAttempts + 1 WHERE reportId = ?`
+  ).run(reportId);
+  const r = db
+    .prepare(`SELECT verifyAttempts FROM report WHERE reportId = ?`)
+    .get(reportId) as { verifyAttempts: number };
+  return r.verifyAttempts;
 }
 
 export function setReportFlags(reportId: string, flags: string[]): void {

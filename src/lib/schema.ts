@@ -73,6 +73,7 @@ export const submitSchema = prefillSchema.extend({
   photosPending: z.boolean().optional(),
   photoCount: z.number().int().optional(),
   identityVerified: z.boolean().optional(),
+  sharedDispute: z.boolean().optional(),
 });
 
 export type SessionInput = z.infer<typeof sessionSchema>;

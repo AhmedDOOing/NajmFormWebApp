@@ -10,6 +10,9 @@ export type ReportStatus =
   | "escalated"
   | "expired";
 
+// Single-device handover phase — drives zone edit-locks (server-enforced).
+export type Phase = "partyA" | "handover" | "partyB" | "complete";
+
 export type Presence = "connected" | "filling" | "submitted" | "absent";
 
 // Edge-case flags — see build brief §7. Each maps to a routing outcome.
@@ -28,7 +31,8 @@ export type Flag =
   | "PARTY_B_UNVERIFIED"
   | "LINK_EXPIRED"
   | "LOC_MANUAL"
-  | "PHOTO_PENDING";
+  | "PHOTO_PENDING"
+  | "SHARED_DISPUTE";
 
 export type RoutingOutcome =
   | "EMERGENCY"
@@ -42,6 +46,8 @@ export interface ReportRow {
   createdAt: string;
   expiresAt: string;
   flags: string; // JSON string[] in the DB
+  phase: Phase;
+  verifyAttempts: number;
 }
 
 export interface LinkRow {
@@ -135,4 +141,5 @@ export interface SubmitPayload extends Prefill {
   photosPending?: boolean; // couldn't upload now -> PHOTO_PENDING
   photoCount?: number;
   identityVerified?: boolean;
+  sharedDispute?: boolean; // Party B disputes A's account -> SHARED_DISPUTE
 }

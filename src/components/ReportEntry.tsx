@@ -5,6 +5,7 @@ import type { Locale, Party, Prefill } from "@/lib/types";
 import { setLangCookie } from "@/lib/locale";
 import LanguageGate from "./LanguageGate";
 import AccidentForm from "./AccidentForm";
+import HandoverFlow from "./HandoverFlow";
 
 // Thin gate in front of the existing form. If the server already found a saved
 // locale cookie, `initialLang` is set and we render the form straight away
@@ -39,6 +40,20 @@ export default function ReportEntry({
           setLangCookie(reportId, party, l);
           setLocale(l);
         }}
+      />
+    );
+  }
+
+  // Party A's link drives the single-device handover flow (A -> handover -> B).
+  // Party B's own link stays the remote fallback (unchanged AccidentForm).
+  if (party === "A") {
+    return (
+      <HandoverFlow
+        reportId={reportId}
+        slug={slug}
+        prefill={prefill}
+        initialFlags={initialFlags}
+        initialLang={locale}
       />
     );
   }

@@ -73,6 +73,9 @@ export function computeFlags(p: SubmitPayload, now: Date = new Date()): Flag[] {
   // Identity verification failed at submit time.
   if (p.identityVerified === false) flags.add("PARTY_B_UNVERIFIED");
 
+  // Party B disputes a shared fact from A's account.
+  if (p.sharedDispute) flags.add("SHARED_DISPUTE");
+
   return [...flags];
 }
 
@@ -88,6 +91,7 @@ const MANUAL: Flag[] = [
   "MULTI_VEHICLE",
   "PARTY_B_TIMEOUT",
   "PARTY_B_UNVERIFIED",
+  "SHARED_DISPUTE",
 ];
 
 export function routeOutcome(flags: string[]): RoutingOutcome {
@@ -192,6 +196,12 @@ export const FLAG_META: Record<
     en: "Photos outstanding",
     ar: "الصور معلّقة",
     outcome: "Submit accepted; photo reminder scheduled.",
+  },
+  SHARED_DISPUTE: {
+    severity: "warn",
+    en: "Party B disputes the shared account",
+    ar: "الطرف الثاني يعترض على الرواية المشتركة",
+    outcome: "Block completion → manual review of the discrepancy.",
   },
 };
 

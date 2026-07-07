@@ -8,6 +8,7 @@ import {
   getSubmissions,
   markLinkUsed,
   recordConsent,
+  setPhase,
   setReportFlags,
   setReportStatus,
   upsertSubmission,
@@ -63,6 +64,15 @@ export async function POST(
     return NextResponse.json(
       { error: "token does not match report/party" },
       { status: 403 }
+    );
+  }
+
+  // Single-device zone lock: once the phone has been handed over, Party A's
+  // zone is frozen for the rest of the session — enforced here, not just hidden.
+  if (party === "A" && report.phase !== "partyA") {
+    return NextResponse.json(
+      { error: "party A zone is locked (phone handed over)" },
+      { status: 423 }
     );
   }
 
@@ -128,7 +138,11 @@ export async function POST(
   }
   setReportStatus(params.reportId, status);
 
-  if (party === "B") cancelPartyBSla(params.reportId);
+  // Party B finishing the single-device session closes the phase machine.
+  if (party === "B") {
+    setPhase(params.reportId, "complete");
+    cancelPartyBSla(params.reportId);
+  }
 
   // Realtime: presence -> submitted, party:submitted, sync:complete if both.
   markSubmitted(params.reportId, party);
