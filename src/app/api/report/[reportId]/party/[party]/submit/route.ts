@@ -67,11 +67,13 @@ export async function POST(
     );
   }
 
-  // Single-device zone lock: once the phone has been handed over, Party A's
-  // zone is frozen for the rest of the session — enforced here, not just hidden.
-  if (party === "A" && report.phase !== "partyA") {
+  // Integrity: a party locks once it has submitted — one person can't overwrite
+  // the other's (or their own) statement/consent. No forced order; either party
+  // may be filled first. Enforced server-side, not just hidden.
+  const alreadyDone = getSubmissions(params.reportId).some((s) => s.party === party);
+  if (alreadyDone) {
     return NextResponse.json(
-      { error: "party A zone is locked (phone handed over)" },
+      { error: "this party has already submitted and is locked" },
       { status: 423 }
     );
   }
@@ -138,8 +140,8 @@ export async function POST(
   }
   setReportStatus(params.reportId, status);
 
-  // Party B finishing the single-device session closes the phase machine.
-  if (party === "B") {
+  // Phase reflects progress: complete once both parts are in.
+  if (bothDone) {
     setPhase(params.reportId, "complete");
     cancelPartyBSla(params.reportId);
   }

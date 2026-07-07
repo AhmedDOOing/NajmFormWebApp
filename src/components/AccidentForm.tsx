@@ -6,6 +6,8 @@ import { dict, type Lang, type Dict } from "@/lib/i18n";
 import { computeFlags, FLAG_META } from "@/lib/flags";
 import type { Flag } from "@/lib/types";
 import { setLangCookie } from "@/lib/locale";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { useReportSocket } from "./useReportSocket";
 import LocationStep from "./LocationStep";
 
@@ -24,6 +26,7 @@ export default function AccidentForm({
   alreadySubmitted,
   initialLang,
   onComplete,
+  onLangChange,
 }: {
   reportId: string;
   party: Party;
@@ -32,10 +35,11 @@ export default function AccidentForm({
   initialFlags: string[];
   alreadySubmitted: boolean;
   initialLang: Lang;
-  // When set (single-device Party A), the orchestrator takes over after a
-  // successful submit (to run the handover) instead of showing the terminal
-  // "submitted" screen.
+  // When set (single-device), the orchestrator takes over after a successful
+  // submit (to run the handoff) instead of showing the terminal screen.
   onComplete?: (party: Party) => void;
+  // Lifts a mid-form language toggle so the orchestrator's other screens follow.
+  onLangChange?: (locale: Lang) => void;
 }) {
   // Language is chosen at the gate (or restored from the cookie) and passed in.
   // The in-form header toggle can still change it afterward.
@@ -50,6 +54,7 @@ export default function AccidentForm({
     setLangState(l);
     setLangCookie(reportId, party, l); // persist the switch too
     sendLang(l); // reflect on the dashboard
+    onLangChange?.(l); // keep the orchestrator's other screens in sync
   };
 
   // Flip the real <html> lang/dir so the whole document (and screen readers)
@@ -275,27 +280,38 @@ export default function AccidentForm({
           <div className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>
             {reportId} · {t.party} {party}
           </div>
-          <div className="lang-seg" role="group" aria-label="Language / اللغة">
-            <button
-              className={lang === "ar" ? "active" : ""}
+          <div className="flex overflow-hidden rounded-full border border-border" role="group" aria-label="Language / اللغة">
+            <Button
+              variant={lang === "ar" ? "default" : "ghost"}
+              size="sm"
+              className="h-8 rounded-none px-3 text-xs"
               onClick={() => setLang("ar")}
               aria-pressed={lang === "ar"}
             >
               العربية
-            </button>
-            <button
-              className={lang === "en" ? "active" : ""}
+            </Button>
+            <Button
+              variant={lang === "en" ? "default" : "ghost"}
+              size="sm"
+              className="h-8 rounded-none px-3 text-xs"
               onClick={() => setLang("en")}
               aria-pressed={lang === "en"}
             >
               English
-            </button>
+            </Button>
           </div>
         </div>
-        <div className="progress">
-          {STEPS.map((_, i) => (
-            <div key={i} className={`seg ${i < step ? "done" : i === step ? "current" : ""}`} />
-          ))}
+        <Progress
+          value={Math.round(((step + 1) / STEPS.length) * 100)}
+          className="mt-3 h-1.5"
+        />
+        <div className="mt-2 flex items-center justify-between text-xs">
+          <span className="font-semibold text-foreground">
+            {[t.stepInjury, t.stepLocation, t.stepDetails, t.stepPhotos, t.stepConfirm][step]}
+          </span>
+          <span className="text-muted-foreground">
+            {step + 1} / {STEPS.length}
+          </span>
         </div>
         <div className="mini-presence">
           <span className="mp">
@@ -305,7 +321,7 @@ export default function AccidentForm({
         </div>
       </div>
 
-      <div className="wiz-body" key={stepId}>
+      <div className="wiz-body animate-fade-up" key={stepId}>
         {/* -------- STEP: injury / safety -------- */}
         {stepId === "injury" && (
           <>
@@ -523,49 +539,45 @@ function Footer(props: {
   // unless the emergency panel is showing its own continue button).
   if (stepId === "injury") return null;
 
+  const primaryCls = "cta-premium h-14 flex-1 rounded-2xl text-base font-bold";
   let primary: React.ReactNode = null;
   if (stepId === "location") {
     primary = (
-      <button className="btn-primary" disabled={!props.locationChosen} onClick={props.onNext}>
+      <Button className={primaryCls} size="lg" disabled={!props.locationChosen} onClick={props.onNext}>
         {t.next}
-      </button>
+      </Button>
     );
   } else if (stepId === "details") {
     primary = (
-      <button className="btn-primary" disabled={!props.requiredComplete} onClick={props.onNext}>
+      <Button className={primaryCls} size="lg" disabled={!props.requiredComplete} onClick={props.onNext}>
         {props.requiredComplete ? t.confirmCorrect : t.fillRequired}
-      </button>
+      </Button>
     );
   } else if (stepId === "photos") {
     primary = props.photoCount ? (
-      <button className="btn-primary" onClick={props.onNext}>
+      <Button className={primaryCls} size="lg" onClick={props.onNext}>
         {t.confirmCorrect}
-      </button>
+      </Button>
     ) : (
-      <button className="btn-primary" onClick={props.onSkipPhotos}>
+      <Button className={primaryCls} size="lg" onClick={props.onSkipPhotos}>
         {t.later}
-      </button>
+      </Button>
     );
   } else if (stepId === "confirm") {
     primary = (
-      <button className="btn-primary wide" disabled={props.busy} onClick={props.onSubmit}>
+      <Button className={primaryCls} size="lg" disabled={props.busy} onClick={props.onSubmit}>
         {props.busy ? t.submitting : t.consentAgreeSubmit}
-      </button>
+      </Button>
     );
   }
 
   return (
     <div className="wiz-foot">
       <div className="inner">
-        {props.showBack && stepId !== "confirm" && (
-          <button className="btn-back" onClick={props.onBack}>
+        {props.showBack && (
+          <Button variant="outline" size="lg" className="h-14" onClick={props.onBack}>
             {t.back}
-          </button>
-        )}
-        {stepId === "confirm" && props.showBack && (
-          <button className="btn-back" onClick={props.onBack}>
-            {t.back}
-          </button>
+          </Button>
         )}
         {primary}
       </div>

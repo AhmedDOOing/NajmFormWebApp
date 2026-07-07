@@ -3,23 +3,23 @@ import { z } from "zod";
 import {
   audit,
   getLink,
-  getLinkForParty,
   getReport,
+  getSubmissions,
   setPhase,
   setReportFlags,
   setReportStatus,
 } from "@/lib/db";
 import { mergeFlags, routeOutcome } from "@/lib/flags";
 import { broadcastFlags } from "@/lib/realtime";
-import { HOST_BASE_URL } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
-const bodySchema = z.object({ slug: z.string() });
+const bodySchema = z.object({ slug: z.string(), reason: z.string().min(1) });
 
 // POST /api/report/:id/absent
-// "The other driver isn't here." A's part still submits + escalates one-sided,
-// and we hand back B's remote link so it can be sent to them instead.
+// The gated exit when the other driver isn't present. Only reachable after the
+// present party has submitted; requires a declared reason. Files a one-sided
+// report (PARTY_ABSENT) and escalates for manual review.
 export async function POST(
   req: NextRequest,
   { params }: { params: { reportId: string } }
@@ -29,29 +29,32 @@ export async function POST(
 
   const parsed = bodySchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success)
-    return NextResponse.json({ error: "slug required" }, { status: 422 });
+    return NextResponse.json({ error: "slug + reason required" }, { status: 422 });
 
-  const aLink = getLink(parsed.data.slug);
-  if (!aLink || aLink.reportId !== params.reportId || aLink.party !== "A") {
-    return NextResponse.json({ error: "not party A's link" }, { status: 403 });
+  const link = getLink(parsed.data.slug);
+  if (!link || link.reportId !== params.reportId) {
+    return NextResponse.json({ error: "invalid token for report" }, { status: 403 });
+  }
+
+  // At least one party must be complete before a one-sided report can be filed.
+  const done = getSubmissions(params.reportId);
+  if (done.length === 0) {
+    return NextResponse.json(
+      { error: "complete your own part before declaring the other driver absent" },
+      { status: 409 }
+    );
   }
 
   const at = new Date().toISOString();
-  const flags = mergeFlags(JSON.parse(report.flags) as string[], ["PARTY_B_TIMEOUT"]);
+  const flags = mergeFlags(JSON.parse(report.flags) as string[], ["PARTY_ABSENT"]);
   setReportFlags(params.reportId, flags);
   setReportStatus(params.reportId, "escalated");
   setPhase(params.reportId, "complete");
-  audit(params.reportId, "party_b_absent", at, {
-    party: "A",
-    detail: "one-sided; remote link offered",
+  audit(params.reportId, "party_absent_declared", at, {
+    party: done[0].party,
+    detail: parsed.data.reason,
   });
   broadcastFlags(params.reportId, flags, "escalated");
 
-  const bLink = getLinkForParty(params.reportId, "B");
-  return NextResponse.json({
-    ok: true,
-    oneSided: true,
-    routing: routeOutcome(flags),
-    partyBUrl: bLink ? `${HOST_BASE_URL}/r/${bLink.slug}` : null,
-  });
+  return NextResponse.json({ ok: true, oneSided: true, routing: routeOutcome(flags) });
 }

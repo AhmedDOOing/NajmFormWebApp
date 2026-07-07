@@ -92,6 +92,7 @@ const MANUAL: Flag[] = [
   "PARTY_B_TIMEOUT",
   "PARTY_B_UNVERIFIED",
   "SHARED_DISPUTE",
+  "PARTY_ABSENT",
 ];
 
 export function routeOutcome(flags: string[]): RoutingOutcome {
@@ -202,6 +203,12 @@ export const FLAG_META: Record<
     en: "Party B disputes the shared account",
     ar: "الطرف الثاني يعترض على الرواية المشتركة",
     outcome: "Block completion → manual review of the discrepancy.",
+  },
+  PARTY_ABSENT: {
+    severity: "warn",
+    en: "Other driver not present — one-sided report",
+    ar: "الطرف الآخر غير موجود — بلاغ من طرف واحد",
+    outcome: "One-sided report with a declared reason → manual review.",
   },
 };
 

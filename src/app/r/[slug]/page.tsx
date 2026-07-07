@@ -1,55 +1,57 @@
 import { cookies } from "next/headers";
-import { getLink, getReport, getSubmissions } from "@/lib/db";
-import type { Prefill } from "@/lib/types";
+import { getLink, getLinkForParty, getReport, getSubmissions } from "@/lib/db";
+import type { Party, Prefill } from "@/lib/types";
 import { langCookieName, parseLocale } from "@/lib/locale";
-import ReportEntry from "@/components/ReportEntry";
+import ReportSession from "@/components/ReportSession";
 import RecoveryPage from "@/components/RecoveryPage";
 
 export const dynamic = "force-dynamic";
 
-// GET /r/:slug — the short link. Resolves the OPAQUE slug server-side to
-// { reportId, party, prefill } and SSR-renders the form with values injected.
-// No PII ever travels in the URL; the slug is only a key.
+// GET /r/:slug — the single entry link. Resolves the OPAQUE slug to its report,
+// then SSR-loads BOTH parties' pre-fill for this one trusted device (never a
+// public API — no PII leak, no PII in the URL). The driver picks their party.
 export default function ShortLinkPage({ params }: { params: { slug: string } }) {
-  const link = getLink(params.slug);
+  const aLink = getLinkForPartyBySlug(params.slug, "A");
+  const bLink = getLinkForPartyBySlug(params.slug, "B");
 
   // Missing / unknown slug -> recovery page, not a raw 404.
-  if (!link) {
+  if (!aLink || !bLink) {
     return <RecoveryPage reason="not_found" />;
   }
 
-  // Expired link -> recovery page that offers a fresh link (LINK_EXPIRED).
-  if (new Date(link.expiresAt).getTime() < Date.now()) {
-    return <RecoveryPage reason="expired" reportId={link.reportId} />;
+  // Expired link -> recovery page.
+  if (new Date(aLink.expiresAt).getTime() < Date.now()) {
+    return <RecoveryPage reason="expired" reportId={aLink.reportId} />;
   }
 
-  const report = getReport(link.reportId);
+  const report = getReport(aLink.reportId);
   if (!report || report.status === "expired") {
-    return <RecoveryPage reason="expired" reportId={link.reportId} />;
+    return <RecoveryPage reason="expired" reportId={aLink.reportId} />;
   }
 
-  const prefill = JSON.parse(link.prefill) as Prefill;
-
-  // Dropped-call resilience: reopening the same link restores the session.
-  // If this party already submitted, we render read-only "submitted" state.
-  const alreadySubmitted = getSubmissions(link.reportId).some(
-    (s) => s.party === link.party
-  );
-
-  // Language chosen before? -> skip the gate (refresh / resumed link).
+  const doneParties = getSubmissions(aLink.reportId).map((s) => s.party) as Party[];
   const saved = parseLocale(
-    cookies().get(langCookieName(link.reportId, link.party))?.value
+    cookies().get(langCookieName(aLink.reportId, "A"))?.value
   );
 
   return (
-    <ReportEntry
-      reportId={link.reportId}
-      party={link.party}
-      slug={link.slug}
-      prefill={prefill}
+    <ReportSession
+      reportId={aLink.reportId}
+      aSlug={aLink.slug}
+      aPrefill={JSON.parse(aLink.prefill) as Prefill}
+      bSlug={bLink.slug}
+      bPrefill={JSON.parse(bLink.prefill) as Prefill}
       initialFlags={JSON.parse(report.flags) as string[]}
-      alreadySubmitted={alreadySubmitted}
       initialLang={saved}
+      doneParties={doneParties}
     />
   );
+}
+
+// Resolve the opened slug to its report, then fetch the given party's link on
+// that report (so one entry link exposes both parties for the single device).
+function getLinkForPartyBySlug(slug: string, party: Party) {
+  const entry = getLink(slug);
+  if (!entry) return undefined;
+  return getLinkForParty(entry.reportId, party);
 }

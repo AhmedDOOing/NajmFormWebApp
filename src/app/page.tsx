@@ -1,6 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { ArrowLeft, Copy, LayoutDashboard, Loader2, Sparkles } from "lucide-react";
 
 interface SessionResult {
   reportId: string;
@@ -9,9 +13,8 @@ interface SessionResult {
   expiresAt: string;
 }
 
-// Dev/demo landing: simulates the voice agent's POST /api/session so you can
-// grab both links + the dashboard in one click. Party A prefill is rich (agent
-// captured it on the call); Party B is minimal (they never spoke to the agent).
+// Premium demo landing: simulates the voice agent's POST /api/session. Party A
+// prefill is rich (captured on the call); Party B is minimal.
 export default function Home() {
   const [res, setRes] = useState<SessionResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -26,82 +29,129 @@ export default function Home() {
           district: "العليا",
           fullName: "محمد عبدالله القحطاني",
           nationalId: "1023456789",
-          nationality: "سعودي",
           mobile: "0551234567",
-          licenceNo: "L8842190",
-          licenceExpiry: "2027-03-01",
           plate: "أ ب ج 4821",
           makeModel: "تويوتا كامري",
-          year: "2022",
-          colour: "أبيض",
-          vehicleType: "private",
-          registrationStatus: "valid",
-          insuranceStatus: "valid",
-          insurer: "التعاونية",
           accidentType: "اصطدام خلفي",
-          vehiclesInvolved: 2,
-          description: "توقفت عند الإشارة واصطدمت بي المركبة الخلفية.",
           otherPartyStatus: "present",
           injuries: false,
           _agentFilledFields: [
-            "city", "district", "fullName", "nationalId", "nationality",
-            "mobile", "licenceNo", "licenceExpiry", "plate", "makeModel",
-            "year", "colour", "vehicleType", "registrationStatus",
-            "insuranceStatus", "insurer", "accidentType", "vehiclesInvolved",
-            "description", "otherPartyStatus",
+            "city", "district", "fullName", "nationalId", "mobile", "plate",
+            "makeModel", "accidentType", "otherPartyStatus",
           ],
         },
-        B: {
-          mobile: "0509876543",
-          _agentFilledFields: ["mobile"],
-        },
+        B: { mobile: "0509876543", _agentFilledFields: ["mobile"] },
       },
     };
-    const r = await fetch("/api/session", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    setRes(await r.json());
-    setBusy(false);
+    try {
+      const r = await fetch("/api/session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = (await r.json()) as SessionResult;
+      setRes(json);
+      toast.success("تم إنشاء البلاغ", { description: json.reportId });
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setBusy(false);
+    }
   }
 
-  return (
-    <div dir="ltr">
-      <div className="appbar">
-        <h1>Najm — Voice→Chat handoff (demo)</h1>
-      </div>
-      <div className="wrap">
-        <div className="card">
-          <h2>Simulate the voice agent</h2>
-          <p className="muted">
-            Mints one report + two opaque short links. Party A opens a fully
-            pre-filled form; Party B opens a near-empty one. No PII in the URL.
-          </p>
-          <button className="btn" onClick={simulate} disabled={busy}>
-            {busy ? "Minting…" : "POST /api/session"}
-          </button>
-        </div>
+  const copy = (url: string) => {
+    navigator.clipboard?.writeText(url);
+    toast.success("تم نسخ الرابط · Link copied");
+  };
 
-        {res && (
-          <div className="card">
-            <h2>Report {res.reportId}</h2>
-            <p className="muted">Open each link in a separate tab to see live presence sync.</p>
-            <p>
-              <b>Party A</b> (pre-filled):<br />
-              <a href={res.partyA.url}>{res.partyA.url}</a>
-            </p>
-            <p>
-              <b>Party B</b> (minimal):<br />
-              <a href={res.partyB.url}>{res.partyB.url}</a>
-            </p>
-            <p>
-              <b>Dashboard</b>:<br />
-              <a href={`/dashboard/${res.reportId}`}>/dashboard/{res.reportId}</a>
-            </p>
-          </div>
-        )}
+  return (
+    <main className="mx-auto flex min-h-[100dvh] max-w-md flex-col items-center justify-center gap-10 p-6">
+      <div className="animate-fade-up flex flex-col items-center gap-6 text-center">
+        <div className="brand-glow">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/najm-logo.svg" alt="نجم Najm" className="h-28 w-auto drop-shadow-xl" />
+        </div>
+        <div className="space-y-2">
+          <h1 className="text-3xl font-extrabold tracking-tight" lang="ar">
+            بلاغ الحادث، ببساطة
+          </h1>
+          <p className="text-balance text-muted-foreground" lang="en">
+            Report an accident in a few calm taps — voice to phone, in Arabic or English.
+          </p>
+        </div>
       </div>
-    </div>
+
+      {!res ? (
+        <Button
+          size="lg"
+          disabled={busy}
+          onClick={simulate}
+          className="cta-premium h-14 w-full rounded-2xl text-base font-bold"
+        >
+          {busy ? (
+            <Loader2 className="size-5 animate-spin" />
+          ) : (
+            <Sparkles className="size-5" />
+          )}
+          محاكاة مكالمة نجم · Simulate the call
+        </Button>
+      ) : (
+        <div className="stagger flex w-full flex-col gap-3">
+          <LinkCard
+            title="رابط البلاغ · Report link"
+            note="يُرسل للسائق — يختار دوره ويكمل البلاغ"
+            url={res.partyA.url}
+            onCopy={copy}
+            primary
+          />
+          <a
+            href={`/dashboard/${res.reportId}`}
+            className="mt-1 inline-flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-primary"
+          >
+            <LayoutDashboard className="size-4" />
+            لوحة المتابعة · Dashboard
+          </a>
+        </div>
+      )}
+    </main>
+  );
+}
+
+function LinkCard({
+  title,
+  note,
+  url,
+  onCopy,
+  primary,
+}: {
+  title: string;
+  note: string;
+  url: string;
+  onCopy: (u: string) => void;
+  primary?: boolean;
+}) {
+  return (
+    <Card className={primary ? "border-primary/50" : ""}>
+      <CardContent className="flex items-center gap-3 p-4">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold">{title}</div>
+          <div className="text-xs text-muted-foreground">{note}</div>
+          <a
+            href={url}
+            className="mt-1 block truncate font-mono text-xs text-primary hover:underline"
+          >
+            {url}
+          </a>
+        </div>
+        <Button variant="ghost" size="icon" aria-label="Copy" onClick={() => onCopy(url)}>
+          <Copy className="size-4" />
+        </Button>
+        <Button asChild size="icon" variant={primary ? "default" : "secondary"} aria-label="Open">
+          <a href={url}>
+            <ArrowLeft className="size-4 rtl:rotate-0 ltr:rotate-180" />
+          </a>
+        </Button>
+      </CardContent>
+    </Card>
   );
 }

@@ -1,3 +1,133 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* shadcn/ui tokens — Najm dark theme (HSL triplets). Prefixed --sc-* so they
+   never collide with the legacy tokens below during the staged migration.
+   Change --sc-primary / --sc-ring (and --font-brand) to re-theme everything. */
+@layer base {
+  :root,
+  .dark {
+    --sc-background: 160 27% 6%;
+    --sc-foreground: 133 27% 94%;
+    --sc-card: 153 22% 10%;
+    --sc-card-foreground: 133 27% 94%;
+    --sc-popover: 153 22% 10%;
+    --sc-popover-foreground: 133 27% 94%;
+    --sc-primary: 149 100% 33%;
+    --sc-primary-foreground: 150 67% 5%;
+    --sc-secondary: 152 20% 13%;
+    --sc-secondary-foreground: 133 27% 94%;
+    --sc-muted: 152 20% 13%;
+    --sc-muted-foreground: 147 10% 60%;
+    --sc-accent: 152 20% 13%;
+    --sc-accent-foreground: 133 27% 94%;
+    --sc-destructive: 358 75% 59%;
+    --sc-destructive-foreground: 133 27% 94%;
+    --sc-border: 148 16% 18%;
+    --sc-input: 148 16% 18%;
+    --sc-ring: 147 68% 46%;
+    --sc-warn: 37 91% 55%;
+    --sc-radius: 0.9rem;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-brand), ui-sans-serif, system-ui, sans-serif;
+  }
+}
+
+/* =========================== PREMIUM LAYER ================================
+   Ambient depth + tasteful motion, all token-driven. Reduced-motion safe. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(55rem 40rem at 50% -10%, hsl(var(--sc-primary) / 0.12), transparent 60%),
+    radial-gradient(40rem 40rem at 100% 108%, hsl(var(--sc-ring) / 0.07), transparent 55%);
+}
+::selection {
+  background: hsl(var(--sc-primary) / 0.3);
+  color: hsl(var(--sc-foreground));
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 0.9; }
+}
+.animate-fade-up { animation: fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.animate-scale-in { animation: scale-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.stagger > * { animation: fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.stagger > *:nth-child(1) { animation-delay: 0.02s; }
+.stagger > *:nth-child(2) { animation-delay: 0.09s; }
+.stagger > *:nth-child(3) { animation-delay: 0.16s; }
+.stagger > *:nth-child(4) { animation-delay: 0.23s; }
+
+/* soft brand glow behind hero marks / primary CTAs */
+.brand-glow {
+  position: relative;
+}
+.brand-glow::after {
+  content: "";
+  position: absolute;
+  inset: -30% -20%;
+  z-index: -1;
+  background: radial-gradient(closest-side, hsl(var(--sc-primary) / 0.35), transparent);
+  filter: blur(28px);
+  animation: glow-pulse 4s ease-in-out infinite;
+}
+/* premium primary CTA lift + glow */
+.cta-premium {
+  box-shadow: 0 10px 30px -10px hsl(var(--sc-primary) / 0.55);
+  transition: transform 0.12s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+.cta-premium:hover { filter: brightness(1.05); box-shadow: 0 14px 36px -10px hsl(var(--sc-primary) / 0.7); }
+.cta-premium:active { transform: translateY(1px) scale(0.995); }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up,
+  .animate-scale-in,
+  .stagger > *,
+  .brand-glow::after {
+    animation: none !important;
+  }
+}
+
+/* =========================== MOBILE HARDENING ============================= */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+button,
+a,
+[role="button"],
+label {
+  touch-action: manipulation;
+}
+/* full-screen centered screens: keep content clear of notch + home indicator */
+.p-safe {
+  padding-top: max(1.5rem, env(safe-area-inset-top));
+  padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+  padding-left: max(1.5rem, env(safe-area-inset-left));
+  padding-right: max(1.5rem, env(safe-area-inset-right));
+}
+
+/* =========================== LEGACY CSS (below) ===========================
+   Being replaced screen-by-screen with shadcn. Kept so unconverted screens
+   keep working during the staged migration; removed as each screen is ported. */
 :root {
   /* ---- Najm brand tokens (single source of truth) --------------------- */
   /* Swap --najm / --najm-bright (or the local font) to fully re-theme.     */
@@ -116,7 +246,7 @@ textarea {
   border-radius: 8px;
   color: var(--text);
   padding: 11px 12px;
-  font-size: 15px;
+  font-size: 16px; /* >=16px prevents iOS Safari zoom-on-focus */
   font-family: inherit;
 }
 textarea {

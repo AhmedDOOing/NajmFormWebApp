@@ -32,7 +32,8 @@ export type Flag =
   | "LINK_EXPIRED"
   | "LOC_MANUAL"
   | "PHOTO_PENDING"
-  | "SHARED_DISPUTE";
+  | "SHARED_DISPUTE"
+  | "PARTY_ABSENT";
 
 export type RoutingOutcome =
   | "EMERGENCY"
