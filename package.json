@@ -1,0 +1,33 @@
+{
+  "name": "najm-handoff",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Najm voice->chat accident-report handoff: link shortener + opaque slug prefill + WebSocket two-party sync barrier.",
+  "scripts": {
+    "dev": "cross-env NODE_ENV=development tsx server.ts",
+    "build": "next build",
+    "start": "cross-env NODE_ENV=production tsx server.ts",
+    "seed": "tsx scripts/seed.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "nanoid": "^3.3.7",
+    "next": "^14.2.35",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.7.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20.14.0",
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
+    "cross-env": "^7.0.3",
+    "puppeteer-core": "^23.11.1",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2"
+  }
+}
