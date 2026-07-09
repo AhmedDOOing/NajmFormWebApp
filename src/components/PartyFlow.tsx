@@ -307,6 +307,15 @@ export default function PartyFlow({
   const stepIndex = Math.max(0, ORDER.indexOf(step));
   const showProgress = ORDER.includes(step);
   const partyLabel = party === "A" ? t.causerCard : t.affectedCard;
+  // Was the other party captured on the call? Only then do we recommend their
+  // link at the end (single-party reports don't push a Party B link).
+  const otherHasData = !!(
+    otherParty &&
+    (otherParty.vehicle?.number ||
+      otherParty.driver?.identityNumber ||
+      otherParty.driver?.mobile ||
+      otherParty.driver?.fullName)
+  );
 
   async function runAnalysis(imgs: PhotoData[]) {
     if (imgs.length === 0) return setAnalysis(null);
@@ -614,13 +623,17 @@ export default function PartyFlow({
             <div>
               <h1 className="text-2xl font-extrabold">{finalStatus === "complete" ? t.reportComplete : t.submitted}</h1>
               <p className="mt-2 text-muted-foreground">
-                {finalStatus === "complete" ? t.bothDone : t.reportFiledBody}
+                {finalStatus === "complete"
+                  ? t.bothDone
+                  : party === "A" && otherHasData
+                  ? t.reportFiledBody
+                  : t.reportFiledSolo}
               </p>
               {finalStatus === "escalated" && (
                 <Badge variant="destructive" className="mt-3 gap-1"><ShieldAlert className="size-3" /> {finalStatus}</Badge>
               )}
             </div>
-            {party === "A" && otherUrl && finalStatus !== "complete" && (
+            {party === "A" && otherHasData && otherUrl && finalStatus !== "complete" && (
               <Card className="w-full text-start">
                 <CardContent className="flex items-center gap-2 p-3">
                   <div className="min-w-0 flex-1">

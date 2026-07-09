@@ -236,6 +236,7 @@ export const dict = {
     submitReport: "إرسال البلاغ",
     reportFiledTitle: "تم إرسال البلاغ",
     reportFiledBody: "أُرسل رابط إلى الطرف الثاني لاستكمال بياناته.",
+    reportFiledSolo: "تم استلام بلاغك.",
     ackLinkLabel: "رابط الطرف الثاني",
     // AI photo analysis (assistive — never authoritative)
     aiTitle: "التحليل المبدئي للصور",
@@ -510,6 +511,7 @@ export const dict = {
     submitReport: "Submit report",
     reportFiledTitle: "Report filed",
     reportFiledBody: "A link was sent to Party B to complete their details.",
+    reportFiledSolo: "Your report has been received.",
     ackLinkLabel: "Party B link",
     // AI photo analysis (assistive — never authoritative)
     aiTitle: "Preliminary photo analysis",
