@@ -4,7 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowLeft, Copy, LayoutDashboard, Loader2, Sparkles } from "lucide-react";
+import { ArrowLeft, Copy, LayoutDashboard, Loader2, Phone, User, Users } from "lucide-react";
 
 interface SessionResult {
   reportId: string;
@@ -13,45 +13,85 @@ interface SessionResult {
   expiresAt: string;
 }
 
-// Premium demo landing: simulates the voice agent's POST /api/session. eTraffic
-// model — mints the causer's (at-fault filer's) registered details + link.
+// Demo Party A / Party B details a voice call might capture.
+const A = {
+  vehicle: { nationality: "سعودية · Saudi", number: "1234", registrationType: "PRIVATE" },
+  driver: {
+    identityType: "الهوية الوطنية · National ID",
+    identityNumber: "1023456789",
+    fullName: "محمد عبدالله القحطاني",
+    mobile: "0551234567",
+    email: "mohammed@example.com",
+  },
+};
+const Bfull = {
+  vehicle: { nationality: "البحرين · Bahrain", number: "7391", registrationType: "COMMERCIAL" },
+  driver: {
+    identityType: "إقامة · Iqama",
+    identityNumber: "1122334455",
+    fullName: "عمران خان · Imran Khan",
+    mobile: "0509876543",
+    email: "imran@example.com",
+  },
+};
+
+// The 3 call-capture workflows (§4 flexible data collection).
+type Scenario = {
+  key: string;
+  icon: typeof User;
+  ar: string;
+  en: string;
+  body: object;
+  bNote: string; // what Party B's link will contain
+};
+const SCENARIOS: Scenario[] = [
+  {
+    key: "a",
+    icon: User,
+    ar: "الطرف الأول فقط",
+    en: "Party A only",
+    body: { partyA: A },
+    bNote: "فارغ — يملأ الطرف الثاني بياناته عبر رابطه · Empty — Party B fills their own",
+  },
+  {
+    key: "ab-phone",
+    icon: Phone,
+    ar: "الطرف الأول + جوال الطرف الثاني",
+    en: "Party A + Party B's phone",
+    body: { partyA: A, partyB: { driver: { mobile: Bfull.driver.mobile } } },
+    bNote: "الجوال مُعبّأ مسبقًا — يُرسل الرابط إليه · Phone prefilled — text B their link",
+  },
+  {
+    key: "both",
+    icon: Users,
+    ar: "كلا الطرفين",
+    en: "Both parties",
+    body: { partyA: A, partyB: Bfull },
+    bNote: "البيانات مُعبّأة مسبقًا · Details prefilled",
+  },
+];
+
 export default function Home() {
   const [res, setRes] = useState<SessionResult | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [scenario, setScenario] = useState<Scenario | null>(null);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
 
-  async function simulate() {
-    setBusy(true);
-    // Demo capture from the voice call: full Party A details + just Party B's
-    // phone (so we can text Party B their own link). Either can be omitted.
-    const body = {
-      ttl: 24 * 60 * 60 * 1000,
-      partyA: {
-        vehicle: { nationality: "سعودية · Saudi", number: "1234", registrationType: "PRIVATE" },
-        driver: {
-          identityType: "الهوية الوطنية · National ID",
-          identityNumber: "1023456789",
-          fullName: "محمد عبدالله القحطاني",
-          mobile: "0551234567",
-          email: "mohammed@example.com",
-        },
-      },
-      partyB: {
-        driver: { mobile: "0509876543" },
-      },
-    };
+  async function simulate(sc: Scenario) {
+    setBusyKey(sc.key);
     try {
       const r = await fetch("/api/session", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ttl: 24 * 60 * 60 * 1000, ...sc.body }),
       });
       const json = (await r.json()) as SessionResult;
       setRes(json);
+      setScenario(sc);
       toast.success("تم إنشاء البلاغ", { description: json.reportId });
     } catch (e) {
       toast.error(String(e));
     } finally {
-      setBusy(false);
+      setBusyKey(null);
     }
   }
 
@@ -61,11 +101,11 @@ export default function Home() {
   };
 
   return (
-    <main className="mx-auto flex min-h-[100dvh] max-w-md flex-col items-center justify-center gap-10 p-6">
-      <div className="animate-fade-up flex flex-col items-center gap-6 text-center">
+    <main className="mx-auto flex min-h-[100dvh] max-w-md flex-col items-center justify-center gap-8 p-6">
+      <div className="animate-fade-up flex flex-col items-center gap-5 text-center">
         <div className="brand-glow">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/najm-logo.svg" alt="نجم Najm" className="h-28 w-auto drop-shadow-xl" />
+          <img src="/najm-logo.svg" alt="نجم Najm" className="h-24 w-auto drop-shadow-xl" />
         </div>
         <div className="space-y-2">
           <h1 className="text-3xl font-extrabold tracking-tight" lang="ar">
@@ -78,41 +118,65 @@ export default function Home() {
       </div>
 
       {!res ? (
-        <Button
-          size="lg"
-          disabled={busy}
-          onClick={simulate}
-          className="cta-premium h-14 w-full rounded-2xl text-base font-bold"
-        >
-          {busy ? (
-            <Loader2 className="size-5 animate-spin" />
-          ) : (
-            <Sparkles className="size-5" />
-          )}
-          محاكاة مكالمة نجم · Simulate the call
-        </Button>
+        <div className="flex w-full flex-col gap-3">
+          <p className="text-center text-sm text-muted-foreground">
+            محاكاة مكالمة نجم — اختر ما التقطته المكالمة:
+            <br />
+            <span lang="en">Simulate the call — pick what it captured</span>
+          </p>
+          {SCENARIOS.map((sc) => {
+            const Icon = sc.icon;
+            return (
+              <button
+                key={sc.key}
+                disabled={busyKey !== null}
+                onClick={() => simulate(sc)}
+                className="flex items-center gap-4 rounded-2xl border border-border bg-card p-4 text-start transition hover:border-primary/60 disabled:opacity-60"
+              >
+                <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
+                  {busyKey === sc.key ? <Loader2 className="size-5 animate-spin" /> : <Icon className="size-5" />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-bold" lang="ar">{sc.ar}</span>
+                  <span className="block text-xs text-muted-foreground" lang="en">{sc.en}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
       ) : (
         <div className="stagger flex w-full flex-col gap-3">
+          <div className="text-center text-xs text-muted-foreground">
+            {scenario?.ar} · <span lang="en">{scenario?.en}</span>
+          </div>
           <LinkCard
             title="رابط الطرف الأول · Party A link"
-            note="يبدأ البلاغ ويُدخل بياناته"
+            note="يبدأ البلاغ ويُدخل بياناته · Starts the report"
             url={res.partyA.url}
             onCopy={copy}
             primary
           />
           <LinkCard
             title="رابط الطرف الثاني · Party B link"
-            note="يُدخل بياناته عبر رابطه الخاص"
+            note={scenario?.bNote ?? ""}
             url={res.partyB.url}
             onCopy={copy}
           />
-          <a
-            href={`/dashboard/${res.reportId}`}
-            className="mt-1 inline-flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-primary"
-          >
-            <LayoutDashboard className="size-4" />
-            لوحة المتابعة · Dashboard
-          </a>
+          <div className="mt-1 flex items-center justify-between">
+            <a
+              href={`/dashboard/${res.reportId}`}
+              className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-primary"
+            >
+              <LayoutDashboard className="size-4" />
+              لوحة المتابعة · Dashboard
+            </a>
+            <button
+              onClick={() => { setRes(null); setScenario(null); }}
+              className="text-sm text-muted-foreground hover:text-primary"
+            >
+              تجربة سيناريو آخر · Try another
+            </button>
+          </div>
         </div>
       )}
     </main>
