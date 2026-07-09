@@ -1,31 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { causerSubmitSchema } from "@/lib/schema";
+import { partySubmitSchema } from "@/lib/schema";
 import {
   audit,
-  getAffected,
   getLink,
+  getLinkForParty,
   getReport,
-  insertAffected,
   setAccident,
-  setCauser,
-  setProperties,
+  setParty,
   setReportFlags,
   setReportStatus,
 } from "@/lib/db";
 import { mergeFlags, routeOutcome } from "@/lib/flags";
 import { deriveAiFlags } from "@/lib/photoAnalysis";
 import { broadcastFlags } from "@/lib/realtime";
-import { newSlug } from "@/lib/slug";
-import { HOST_BASE_URL } from "@/lib/config";
-import type { CauserData, Flag, PhotoAnalysis } from "@/lib/types";
+import { baseUrlFromRequest } from "@/lib/config";
+import type { AccidentData, Flag, PartyData, PhotoAnalysis } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-const bodySchema = z.object({ slug: z.string() }).and(causerSubmitSchema);
+const bodySchema = z.object({ slug: z.string() }).and(partySubmitSchema);
 
-// POST /api/report/:id/submit — the CAUSER files the whole report + signs the
-// fault declaration. Generates an acknowledgment link per affected party.
+// POST /api/report/:id/submit — a party (A or B, decided by the link) files
+// their OWN section. Neutral: no fault, no "adding" the other party. Party A
+// also carries the shared accident details. Any combination completes safely.
 export async function POST(
   req: NextRequest,
   { params }: { params: { reportId: string } }
@@ -44,59 +42,43 @@ export async function POST(
   }
   const body = parsed.data;
 
-  // Only the causer's own link may file. (Affected parties never file.)
+  // The link decides which party is filing.
   const link = getLink(body.slug);
-  if (!link || link.reportId !== params.reportId || link.party !== "A") {
-    return NextResponse.json({ error: "not the causer's link" }, { status: 403 });
+  if (!link || link.reportId !== params.reportId || (link.party !== "A" && link.party !== "B")) {
+    return NextResponse.json({ error: "invalid link" }, { status: 403 });
+  }
+  const party = link.party;
+  const at = new Date().toISOString();
+
+  const partyA = JSON.parse(report.partyA || "{}") as PartyData;
+  const partyB = JSON.parse(report.partyB || "{}") as PartyData;
+  const existing = party === "A" ? partyA : partyB;
+  if (existing.submittedAt) {
+    return NextResponse.json({ error: "this party already submitted" }, { status: 423 });
   }
 
-  // Fault declaration is required (schema enforces literal true) and is a
-  // discrete, timestamped admission + consent.
-  const now = new Date();
-  const at = now.toISOString();
-
-  // Causer already filed? locked.
-  const existing = JSON.parse(report.causer || "{}") as CauserData;
-  if (existing.faultDeclaration?.accepted) {
-    return NextResponse.json({ error: "report already filed" }, { status: 423 });
-  }
-
-  // Persist causer (merge session details + any edits) + declaration.
-  const causer: CauserData = {
-    vehicle: { ...existing.vehicle, ...body.causer?.vehicle },
-    driver: { ...existing.driver, ...body.causer?.driver },
-    faultDeclaration: { accepted: true, at },
+  // Store this party's own section (merge any prefill + the submitted values).
+  const data: PartyData = {
+    vehicle: { ...existing.vehicle, ...body.party.vehicle },
+    driver: { ...existing.driver, ...body.party.driver },
+    submittedAt: at,
+    consentAt: at,
+    declaredRole: body.party.declaredRole ?? existing.declaredRole,
   };
-  setCauser(params.reportId, causer);
-  setAccident(params.reportId, body.accident);
-  setProperties(params.reportId, body.properties);
+  setParty(params.reportId, party, data);
 
-  // Insert affected parties (added by lookup) + mint an ack link for each.
-  const affectedUrls: { url: string; name?: string }[] = [];
-  body.affected.forEach((a, i) => {
-    const ackSlug = newSlug();
-    insertAffected({
-      reportId: params.reportId,
-      idx: i,
-      vehicle: a.vehicle,
-      driver: a.driver,
-      ackSlug,
-      lookupFailed: !!a.lookupFailed,
-      addedAt: at,
-    });
-    affectedUrls.push({ url: `${HOST_BASE_URL}/r/${ackSlug}`, name: a.driver.fullName });
-  });
+  // Party A carries the shared accident details.
+  if (party === "A" && body.accident) setAccident(params.reportId, body.accident);
 
-  // Compute flags.
+  // Flags — from the shared accident + the (assistive, neutral) photo analysis.
+  const accident =
+    party === "A" && body.accident
+      ? body.accident
+      : (JSON.parse(report.accident || "{}") as AccidentData);
   const flags: Flag[] = [];
-  if (body.accident.injuries) flags.push("INJURY");
-  if (body.affected.length === 0 && body.properties.length > 0)
-    flags.push("PROPERTY_ONLY");
-  if (body.affected.some((a) => a.lookupFailed)) flags.push("AFFECTED_LOOKUP_FAILED");
-  if (body.accident.locationSource === "manual") flags.push("LOC_MANUAL");
-  if (body.accident.photosPending) flags.push("PHOTO_PENDING");
-  // Assistive AI flags from the photo analysis that already ran on the accident
-  // step (stored on the report). Applied here so routing is decided in one place.
+  if (accident.injuries) flags.push("INJURY");
+  if (accident.locationSource === "manual") flags.push("LOC_MANUAL");
+  if (accident.photosPending) flags.push("PHOTO_PENDING");
   const photoAnalysis = report.photoAnalysis
     ? (JSON.parse(report.photoAnalysis) as PhotoAnalysis)
     : null;
@@ -105,30 +87,33 @@ export async function POST(
   const merged = mergeFlags(JSON.parse(report.flags) as string[], flags);
   setReportFlags(params.reportId, merged);
 
-  // Status: emergency overrides; any AI signal holds the report for a human
-  // (never auto-completes on the AI output); otherwise "filed" while awaiting
-  // acks, or "complete" when there are no affected parties to acknowledge.
+  // Status: both submitted → complete; injuries/AI → escalated (manual review);
+  // otherwise this party is done and we wait for the other (any combination ok).
+  const otherDone = party === "A" ? !!partyB.submittedAt : !!partyA.submittedAt;
   const routing = routeOutcome(merged);
   let status: string;
   if (routing === "EMERGENCY") status = "escalated";
   else if (aiFlags.length > 0) status = "escalated";
-  else if (body.affected.length === 0) status = "complete";
-  else status = "filed";
+  else if (otherDone) status = "complete";
+  else status = party === "A" ? "partyA_done" : "partyB_done";
   setReportStatus(params.reportId, status as never);
 
-  audit(params.reportId, "causer_filed", at, {
-    party: "A",
-    detail: `affected:${body.affected.length} properties:${body.properties.length}`,
-  });
-  audit(params.reportId, "fault_declaration_signed", at, { party: "A" });
+  audit(params.reportId, "party_submitted", at, { party, detail: `status:${status}` });
   broadcastFlags(params.reportId, merged, status);
+
+  // The other party's link to share so they can complete their own section.
+  const otherLink = getLinkForParty(params.reportId, party === "A" ? "B" : "A");
+  const otherPartyUrl = otherLink
+    ? `${baseUrlFromRequest(req)}/r/${otherLink.slug}`
+    : null;
 
   return NextResponse.json({
     ok: true,
     reportId: params.reportId,
+    party,
     status,
     flags: merged,
     routing,
-    affected: affectedUrls,
+    otherPartyUrl,
   });
 }

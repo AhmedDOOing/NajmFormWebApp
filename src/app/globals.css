@@ -82,17 +82,35 @@ body::before {
   position: absolute;
   inset: -30% -20%;
   z-index: -1;
-  background: radial-gradient(closest-side, hsl(var(--sc-primary) / 0.35), transparent);
+  /* Calm, static glow — no continuous pulsing (§7 low-distraction). */
+  background: radial-gradient(closest-side, hsl(var(--sc-primary) / 0.28), transparent);
   filter: blur(28px);
-  animation: glow-pulse 4s ease-in-out infinite;
 }
-/* premium primary CTA lift + glow */
+/* Primary CTA (§8): disabled stays clearly visible (discoverable) but flat;
+   the moment it becomes enabled it grows slightly + gains a soft glow via a
+   smooth transition, drawing attention to the next action without being noisy. */
 .cta-premium {
-  box-shadow: 0 10px 30px -10px hsl(var(--sc-primary) / 0.55);
-  transition: transform 0.12s ease, box-shadow 0.2s ease, filter 0.2s ease;
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.3s ease, filter 0.2s ease, opacity 0.2s ease;
 }
-.cta-premium:hover { filter: brightness(1.05); box-shadow: 0 14px 36px -10px hsl(var(--sc-primary) / 0.7); }
-.cta-premium:active { transform: translateY(1px) scale(0.995); }
+.cta-premium:disabled {
+  opacity: 0.55; /* still readable, not hidden */
+  box-shadow: none;
+  transform: none;
+}
+.cta-premium:not(:disabled) {
+  box-shadow: 0 12px 34px -10px hsl(var(--sc-primary) / 0.6);
+  transform: scale(1.025);
+}
+.cta-premium:not(:disabled):hover {
+  filter: brightness(1.06);
+  box-shadow: 0 16px 40px -10px hsl(var(--sc-primary) / 0.75);
+}
+.cta-premium:not(:disabled):active { transform: scale(0.99); }
+@media (prefers-reduced-motion: reduce) {
+  .cta-premium { transition: box-shadow 0.2s ease, opacity 0.2s ease; }
+  .cta-premium:not(:disabled) { transform: none; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-up,

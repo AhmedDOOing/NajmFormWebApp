@@ -22,10 +22,6 @@ import type { Flag, PhotoAnalysis, PhotoAnalysisResult } from "./types";
 
 const MODEL = "claude-sonnet-5";
 
-// Below this, a fault indication is treated as "undetermined" and never raises
-// AI_FAULT_MISMATCH (see the route). Assistive tools must not over-claim.
-export const FAULT_CONFIDENCE_THRESHOLD = 0.6;
-
 export type AnalysisMediaType =
   | "image/jpeg"
   | "image/png"
@@ -38,11 +34,11 @@ export interface AnalysisImage {
 }
 
 export interface AnalysisContext {
-  causerVehicle?: string; // free-text describing the at-fault vehicle
-  affectedVehicles?: string[]; // the other party's vehicle(s)
+  partyAVehicle?: string; // free-text describing Party A's vehicle
+  partyBVehicles?: string[]; // Party B's vehicle(s)
   accidentDateTime?: string;
   injuries?: boolean;
-  properties?: string[]; // property items the causer said were hit
+  properties?: string[]; // property items reported as hit
 }
 
 // zod guard — validates whatever the model produced before we trust it.
@@ -60,13 +56,8 @@ const resultSchema = z.object({
     matchesDescription: z.boolean(),
     discrepancies: z.array(z.string()),
   }),
-  faultIndication: z.object({
-    party: z.enum(["A", "B", "shared", "undetermined"]),
-    confidence: z.number().min(0).max(1),
-    reasoning: z.string(),
-    limitations: z.string(),
-  }),
   imageQualityIssues: z.array(z.string()),
+  limitations: z.string(),
 });
 
 // Forced tool call → guarantees Claude returns exactly this shape (strict).
@@ -124,73 +115,50 @@ const ANALYSIS_TOOL: Anthropic.Tool = {
         },
         required: ["matchesDescription", "discrepancies"],
       },
-      faultIndication: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          party: {
-            type: "string",
-            enum: ["A", "B", "shared", "undetermined"],
-            description:
-              "Which party the physical evidence *suggests* is at fault. A = the driver who admitted fault (causer). B = the other/affected party. Use 'undetermined' whenever photos cannot support a confident read (this is the common, safe answer).",
-          },
-          confidence: {
-            type: "number",
-            description: "0..1 confidence in `party`. Be conservative.",
-          },
-          reasoning: {
-            type: "string",
-            description: "Brief basis for the indication, grounded in the images.",
-          },
-          limitations: {
-            type: "string",
-            description:
-              "What the photos cannot establish (speed, right-of-way, signals, sequence).",
-          },
-        },
-        required: ["party", "confidence", "reasoning", "limitations"],
-      },
       imageQualityIssues: {
         type: "array",
         items: { type: "string" },
         description:
           "Overall photo-quality problems that warrant retaking photos; empty if none.",
       },
+      limitations: {
+        type: "string",
+        description:
+          "What the photos alone cannot establish (speed, right-of-way, signal state, sequence of events). Do NOT assign fault to any party.",
+      },
     },
     required: [
       "perImage",
       "damageSummary",
       "consistency",
-      "faultIndication",
       "imageQualityIssues",
+      "limitations",
     ],
   },
 };
 
-const SYSTEM_PROMPT = `You are an assistive vision reviewer for a traffic-accident reporting service. You produce a PRELIMINARY analysis of accident scene photos to help a HUMAN adjuster — you are NOT the decision maker.
+const SYSTEM_PROMPT = `You are an assistive vision reviewer for a traffic-accident reporting service. You produce a PRELIMINARY, NEUTRAL analysis of accident scene photos to help a HUMAN adjuster — you are NOT the decision maker.
 
 Absolute rules:
-- You do NOT decide, confirm, or settle fault or liability. You describe what is visible and flag inconsistencies.
+- Stay completely NEUTRAL. Do NOT assign, suggest, or imply fault, blame, or liability to any party. Never use words like "at-fault", "caused", "offender", or "victim". Describe only what is visible.
 - Photos alone cannot establish speed, right-of-way, signal state, or the sequence of events. Say so in "limitations".
-- Prefer "undetermined" for faultIndication.party and a low confidence whenever the images do not clearly support a read. Over-claiming is worse than under-claiming.
-- Party mapping: A = the driver who signed the fault declaration (the causer). B = the other/affected party.
-- Only report discrepancies you can actually see in the images. If the damage plausibly fits the account, set consistency.matchesDescription = true with an empty discrepancies list.
+- Only report discrepancies you can actually see in the images. If the visible damage plausibly fits the reported account, set consistency.matchesDescription = true with an empty discrepancies list.
 - Respond ONLY by calling the record_analysis tool. Do not write prose.
 - Be concise: keep damageSummary to 2-4 sentences and per-image descriptions to one short sentence. Brevity keeps this fast for a roadside user.`;
 
 function buildPromptText(ctx: AnalysisContext, imageCount: number): string {
   const lines = [
     `There are ${imageCount} accident scene photo(s), indexed 0..${imageCount - 1}.`,
-    `The causer (Party A) has ADMITTED fault. Your job is to describe visible damage and flag anything inconsistent for a human reviewer — not to confirm or overturn that admission.`,
+    `Describe the visible damage and flag anything inconsistent with the reported account for a human reviewer. Remain neutral — do not assign fault to any party.`,
   ];
-  if (ctx.causerVehicle) lines.push(`Reported causer (A) vehicle: ${ctx.causerVehicle}.`);
-  if (ctx.affectedVehicles?.length)
-    lines.push(`Reported affected (B) vehicle(s): ${ctx.affectedVehicles.join("; ")}.`);
+  if (ctx.partyAVehicle) lines.push(`Reported Party A vehicle: ${ctx.partyAVehicle}.`);
+  if (ctx.partyBVehicles?.length)
+    lines.push(`Reported Party B vehicle(s): ${ctx.partyBVehicles.join("; ")}.`);
   if (ctx.properties?.length)
     lines.push(`Reported damaged property: ${ctx.properties.join("; ")}.`);
   if (ctx.accidentDateTime) lines.push(`Reported date/time: ${ctx.accidentDateTime}.`);
   if (ctx.injuries) lines.push(`Injuries were reported.`);
-  lines.push(`Analyze the photos and record your preliminary findings via record_analysis.`);
+  lines.push(`Analyze the photos and record your neutral, preliminary findings via record_analysis.`);
   return lines.join("\n");
 }
 
@@ -207,13 +175,8 @@ function stubAnalysis(imageCount: number, at: string): PhotoAnalysis {
     damageSummary:
       "Preliminary analysis unavailable in this environment (ANTHROPIC_API_KEY not set). This is a placeholder for a human reviewer.",
     consistency: { matchesDescription: true, discrepancies: [] },
-    faultIndication: {
-      party: "undetermined",
-      confidence: 0,
-      reasoning: "No model available to analyze the images.",
-      limitations: "Analysis was not performed; a human review is required.",
-    },
     imageQualityIssues: [],
+    limitations: "Analysis was not performed; a human review is required.",
   };
   return { status: "complete", modelVersion: "stub", at, imageCount, result };
 }
@@ -283,19 +246,14 @@ export async function analyzePhotos(
   };
 }
 
-// Assistive flags derived from a completed analysis. Single source of truth —
-// used by the /submit route to apply routing. Never confirms fault: an
-// undetermined / low-confidence read raises nothing.
+// Assistive flag derived from a completed analysis. Single source of truth —
+// used by the /submit route to route to manual review. Neutral: only flags a
+// damage/account inconsistency; never assigns fault.
 export function deriveAiFlags(analysis: PhotoAnalysis | null): Flag[] {
   if (!analysis || analysis.status !== "complete" || !analysis.result) return [];
   const r = analysis.result;
   const out: Flag[] = [];
   if (!r.consistency.matchesDescription || r.consistency.discrepancies.length > 0)
     out.push("AI_DAMAGE_INCONSISTENT");
-  if (
-    r.faultIndication.party === "B" &&
-    r.faultIndication.confidence >= FAULT_CONFIDENCE_THRESHOLD
-  )
-    out.push("AI_FAULT_MISMATCH");
   return out;
 }

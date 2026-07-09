@@ -1,25 +1,36 @@
 import { DEFAULT_LINK_TTL_MS, HOST_BASE_URL } from "./config";
-import { audit, getReport, insertLink, insertReport, setCauser } from "./db";
+import { audit, getReport, insertLink, insertReport, setParty } from "./db";
 import { newReportId, newSlug } from "./slug";
 import type { DriverInfo, VehicleInfo } from "./types";
+
+type PartyPrefill = { vehicle?: Partial<VehicleInfo>; driver?: Partial<DriverInfo> };
 
 export interface CreateSessionInput {
   reportId?: string;
   ttl?: number; // ms
-  // The causer's registered details (from the voice agent / their identity).
-  causer?: { vehicle?: Partial<VehicleInfo>; driver?: Partial<DriverInfo> };
+  // Whatever the voice call captured. Any subset is fine: Party A only, Party A
+  // + Party B's phone (to text B their link), or both parties' details.
+  partyA?: PartyPrefill;
+  partyB?: PartyPrefill;
+  causer?: PartyPrefill; // legacy alias for partyA
 }
 
 export interface CreateSessionResult {
   reportId: string;
-  causer: { url: string; slug: string };
+  partyA: { url: string; slug: string };
+  partyB: { url: string; slug: string };
   expiresAt: string;
 }
 
-// eTraffic model: mint one report + ONE opaque link for the causer (the only
-// filer). Affected parties are added later by lookup and get their own ack
-// links. The slug carries NO PII — the causer's details live server-side.
-export function createSession(input: CreateSessionInput): CreateSessionResult {
+// Neutral two-party model: mint one report + TWO opaque links (Party A and
+// Party B). Either can start; each party fills only their own section. The slug
+// carries NO PII — party details live server-side, SSR'd only to the link holder.
+// `baseUrl` (from the incoming request's host) makes the links reachable from
+// wherever the page was actually opened (localhost on the Mac, LAN IP on a phone).
+export function createSession(
+  input: CreateSessionInput,
+  baseUrl: string = HOST_BASE_URL
+): CreateSessionResult {
   const now = new Date();
   const ttl = input.ttl ?? DEFAULT_LINK_TTL_MS;
   const expiresAt = new Date(now.getTime() + ttl).toISOString();
@@ -30,25 +41,27 @@ export function createSession(input: CreateSessionInput): CreateSessionResult {
   if (getReport(reportId)) reportId = newReportId();
 
   insertReport({ reportId, createdAt, expiresAt });
-  setCauser(reportId, {
-    vehicle: input.causer?.vehicle ?? {},
-    driver: input.causer?.driver ?? {},
-  });
+  // Seed each party with whatever the call captured (partyA falls back to the
+  // legacy `causer` alias). Party B is often just a phone number so we can text
+  // them their link — that's fine, it prefills their form.
+  const a = input.partyA ?? input.causer;
+  setParty(reportId, "A", { vehicle: a?.vehicle ?? {}, driver: a?.driver ?? {} });
+  if (input.partyB)
+    setParty(reportId, "B", {
+      vehicle: input.partyB.vehicle ?? {},
+      driver: input.partyB.driver ?? {},
+    });
   audit(reportId, "session_created", createdAt);
 
-  const slug = newSlug();
-  insertLink({
-    slug,
-    reportId,
-    party: "A", // the causer's filing link
-    prefill: "{}",
-    usedAt: null,
-    expiresAt,
-  });
+  const slugA = newSlug();
+  const slugB = newSlug();
+  insertLink({ slug: slugA, reportId, party: "A", prefill: "{}", usedAt: null, expiresAt });
+  insertLink({ slug: slugB, reportId, party: "B", prefill: "{}", usedAt: null, expiresAt });
 
   return {
     reportId,
-    causer: { slug, url: `${HOST_BASE_URL}/r/${slug}` },
+    partyA: { slug: slugA, url: `${baseUrl}/r/${slugA}` },
+    partyB: { slug: slugB, url: `${baseUrl}/r/${slugB}` },
     expiresAt,
   };
 }

@@ -67,52 +67,50 @@ licensed face, register it with `next/font/local` and point `--font-brand` at it
 Google font stays as the fallback. Accessibility: visible `:focus-visible` outlines, tap
 targets ≥ 44px, and `prefers-reduced-motion` disables the pulsing location halo.
 
-## eTraffic model — one at-fault filer + affected acknowledgment (current flow)
+## Neutral two-party model (current flow)
 
-Mirrors Bahrain's eTraffic "Report Traffic Accidents": **only the causer (at-fault
-driver) fills the report.** The affected driver is **added by registry lookup** (not typed)
-and receives an **acknowledgment link** — they only Accept or Reject the fault admission,
-they never fill a form.
+**Fault-neutral by design.** The app never implies fault or liability during data collection —
+no "causer / at-fault / affected / victim", no fault declaration. Everything is **Party A /
+Party B** (labels, buttons, headings, validation, dashboard). Fault is determined outside the app.
+
+Each party fills **only their own section** (same form, identical layout/validation for both).
+A session mints **two opaque links** (Party A + Party B); either can start, and the report
+handles **any combination** — A only, B only, both, or one-then-the-other — without assuming
+the other party participates.
 
 ```
-Causer link (/r/<slug>) → language gate → Report home (3 cards):
-   • Causer card   — read-only, pre-filled (vehicle no. + registration + ID)
-   • Affected card — "+ add" → LOOKUP by vehicle no. + ID → read-only registry detail
-   • Properties    — "+ add" → modal (type + ownership + address)
-→ Accident details (governorate/area, location text 80ch, date, time, photos, coordinates+map)
-→ Fault declaration (required, timestamped admission + consent) → Submit
-→ each affected party gets an opaque acknowledgment link:
-      /r/<ack-slug> → read-only summary → Accept | Reject (no data entry)
-      all Accept → complete + route;  Reject → FAULT_DISPUTED → manual review / police
+Party A link (/r/<slug>) → language gate → injuries triage (safety gate; Yes → call 911)
+  → one scrollable form:  [Party A: vehicle + driver]  +  [shared Accident: date, time,
+      photos (live AI damage summary under the upload), coordinates + map]  + neutral consent
+  → Submit → done: shows the Party B link to share.  status = partyA_done (→ complete when B done)
+
+Party B link (/r/<slug>) → language gate → one scrollable form:
+      [Party A's submitted info + accident — READ ONLY]  +  [Party B: vehicle + driver]  + consent
+  → Submit.  status = partyB_done (→ complete when both done)
 ```
 
-**Registry lookup** is the key integration (`src/lib/etraffic.ts` → `lookupParty()`): a dev
-stub with seeded records now; **⚠ wire the real registry (KSA: Najm/Elm/Absher; Bahrain:
-traffic registry) before production — client-confirmation item.**
+Data model: `report.partyA` + `report.partyB` (each vehicle + driver + `submittedAt`/`consentAt`),
+plus the shared `report.accident` (Party A captures it). No fault fields. `submit` decides the
+party from the link, stores that party's section, and transitions status
+(`open → partyA_done/partyB_done → complete`; `INJURY` or an AI signal → `escalated`).
 
-Roles: **Causer** (الطرف المتسبب, only filer) · **Affected** (الطرف المتضرر, added by lookup,
-one or more, acknowledge only) · **Property** (objects hit, no driver).
+Edge cases → flags (neutral): `INJURY` (emergency, overrides), `LOC_MANUAL`, `PHOTO_PENDING`,
+`AI_DAMAGE_INCONSISTENT` (photos don't match the account → manual review). Every party
+submission + consent is timestamped in the audit trail.
 
-Edge cases → flags: `INJURY` (emergency, overrides), `FAULT_DISPUTED` (reject → manual/police),
-`AFFECTED_TIMEOUT` (never acknowledged → held), `AFFECTED_LOOKUP_FAILED` (declared fallback →
-review), `PROPERTY_ONLY` (no other driver → completes on submission). The causer's fault
-declaration and every accept/reject are timestamped in the audit trail.
-
-Endpoints: `POST /api/session` (mint causer link), `POST /api/lookup`,
-`POST /api/report/:id/submit` (causer files), `POST /api/report/:id/analyze` (AI photo
-analysis, causer link only), `POST /api/ack/:ackSlug` (accept/reject),
-`GET /api/report/:id` (dashboard). The old two-sided co-fill / single-device handover flow
-was removed.
+Endpoints: `POST /api/session` (mint both party links), `POST /api/report/:id/submit`
+(a party files their own section), `POST /api/report/:id/analyze` (AI photo analysis, Party A),
+`GET /api/report/:id` (dashboard).
 
 ## AI photo analysis & damage summary (assistive, human-reviewed)
 
-As the causer adds photos on the accident step, the scene photos are analyzed by Claude vision
-**live, right under the upload**, producing a **preliminary** read: a plain-language damage
-summary, per-image notes, consistency check vs. the reported account, image-quality issues, and
-a *conservative* fault indication. Latency is kept low by downscaling images client-side
-(≤1280px, JPEG) before upload, an output cap scaled to the image count, and a concise-output
-prompt. The preview only stores the result — the authoritative routing (including the AI flags)
-is applied once, on `/submit`.
+As Party A adds photos in the form, the scene photos are analyzed by Claude vision
+**live, right under the upload**, producing a **preliminary, NEUTRAL** read: a plain-language
+damage summary, per-image notes, a consistency check vs. the reported account, image-quality
+issues, and neutral limitations. It **never assigns fault** to any party. Latency is kept low by
+downscaling images client-side (≤1280px, JPEG) before upload, an output cap scaled to the image
+count, and a concise-output prompt. The preview only stores the result — the authoritative
+routing (the single neutral `AI_DAMAGE_INCONSISTENT` flag) is applied once, on `/submit`.
 
 **This is assistive, never authoritative.** Design guarantees:
 
@@ -123,16 +121,15 @@ is applied once, on `/submit`.
   self-contained result (`{ reportId, status, modelVersion, at, imageCount, result }`) is
   stored on the report (`photoAnalysis` column) and written to the audit trail. That record is
   portable — lift it into its own Postgres/Supabase table later with no reshaping.
-- **Never decides fault.** The result is labelled *"تحليل مبدئي — للمراجعة / Preliminary
-  analysis — for review"* everywhere (done screen + dashboard), never "verdict/confirmed".
-  It never overrides the causer's admission. Two signals only *add* a manual-review flag
-  (derived in one place, `deriveAiFlags`, and applied on submit): `AI_DAMAGE_INCONSISTENT`
-  (consistency mismatch / discrepancies) and `AI_FAULT_MISMATCH` (photos point at the *other*
-  party above a confidence threshold). Both route to `MANUAL_REVIEW`; when raised, the report is
-  `escalated` instead of auto-completing. No path auto-approves or auto-closes a claim from the
-  AI output.
+- **Neutral — never decides fault.** The result is labelled *"تحليل مبدئي — للمراجعة /
+  Preliminary analysis — for review"* everywhere (form + dashboard), never "verdict/confirmed",
+  and it does **not** assign fault to any party. Exactly one neutral signal *adds* a
+  manual-review flag (derived in one place, `deriveAiFlags`, applied on submit):
+  `AI_DAMAGE_INCONSISTENT` (visible damage doesn't match the reported account). It routes to
+  `MANUAL_REVIEW` and `escalated` instead of auto-completing. No path auto-approves or
+  auto-closes a claim from the AI output.
 - **Graceful degradation.** If `ANTHROPIC_API_KEY` is unset, a clearly-marked `stub` result is
-  returned (fault `undetermined`) so the flow stays testable in dev.
+  returned so the flow stays testable in dev.
   **>>> Set `ANTHROPIC_API_KEY` in prod. <<<**
 
 ## (retired) Single-device handover

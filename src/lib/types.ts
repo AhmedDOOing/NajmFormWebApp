@@ -40,9 +40,9 @@ export type Flag =
   | "AFFECTED_TIMEOUT"
   | "AFFECTED_LOOKUP_FAILED"
   | "PROPERTY_ONLY"
-  // AI photo-analysis flags — ASSISTIVE only. Both route to manual review; the
-  // AI never confirms or overrides the causer's fault admission.
-  | "AI_FAULT_MISMATCH"
+  // AI photo-analysis flag — ASSISTIVE only, routes to manual review. Neutral:
+  // it flags when visible damage looks inconsistent with the reported account,
+  // never assigns fault.
   | "AI_DAMAGE_INCONSISTENT";
 
 export type RoutingOutcome =
@@ -59,9 +59,11 @@ export interface ReportRow {
   flags: string; // JSON string[] in the DB
   phase: Phase;
   verifyAttempts: number;
-  causer: string; // JSON CauserData
-  accident: string; // JSON AccidentData
-  properties: string; // JSON PropertyItem[]
+  causer: string; // JSON CauserData (legacy; retained for old rows)
+  partyA: string; // JSON PartyData
+  partyB: string; // JSON PartyData
+  accident: string; // JSON AccidentData (shared; Party A fills)
+  properties: string; // JSON PropertyItem[] (legacy; unused in two-party flow)
   photoAnalysis: string; // JSON PhotoAnalysis | '' (empty = not run)
 }
 
@@ -148,6 +150,19 @@ export interface CauserData {
   faultDeclaration?: { accepted: true; at: string };
 }
 
+// Neutral two-party model: each party fills only their OWN section. Both are
+// independent and optional — a report can be completed by A only, B only, both,
+// or one-then-the-other. No fault/liability is implied anywhere.
+export interface PartyData {
+  vehicle: VehicleInfo;
+  driver: DriverInfo;
+  submittedAt?: string; // set when that party submits their section
+  consentAt?: string; // neutral "details correct + consent to processing"
+  // The reporter's self-declared role on the entry screen (informational; does
+  // not decide fault — that's determined outside the app).
+  declaredRole?: "affected" | "causer";
+}
+
 export type AckStatus = "pending" | "accepted" | "rejected";
 
 // Stored in the `affected` table (read-only, from the registry lookup).
@@ -214,15 +229,11 @@ export type InsuranceStatus = "valid" | "expired" | "none" | "unknown";
 export type OtherPartyStatus = "present" | "fled" | "parked" | "none";
 
 // ===========================================================================
-// AI photo analysis — ASSISTIVE, human-reviewed. Never authoritative.
-// The output is a *preliminary* read of the uploaded scene photos: it describes
-// visible damage and flags inconsistencies for a human reviewer. It NEVER
-// decides or confirms fault, and no code path auto-approves/closes a claim from
-// it. `faultIndication.party` maps A = the driver who signed the fault
-// declaration (causer), B = the other/affected party.
+// AI photo analysis — ASSISTIVE, human-reviewed. Never authoritative and fully
+// NEUTRAL: it describes visible damage and flags inconsistencies with the
+// reported account for a human reviewer. It NEVER assigns fault or liability to
+// either party, and no code path auto-approves/closes a claim from it.
 // ===========================================================================
-
-export type FaultParty = "A" | "B" | "shared" | "undetermined";
 
 export interface PerImageNote {
   index: number;
@@ -235,16 +246,11 @@ export interface PhotoAnalysisResult {
   perImage: PerImageNote[];
   damageSummary: string;
   consistency: {
-    matchesDescription: boolean;
+    matchesDescription: boolean; // does visible damage plausibly fit the account
     discrepancies: string[];
   };
-  faultIndication: {
-    party: FaultParty; // A = causer (admitted), B = affected — see note above
-    confidence: number; // 0..1
-    reasoning: string;
-    limitations: string;
-  };
   imageQualityIssues: string[];
+  limitations: string; // what photos alone cannot establish (neutral)
 }
 
 export type AnalysisStatus = "complete" | "failed" | "skipped";

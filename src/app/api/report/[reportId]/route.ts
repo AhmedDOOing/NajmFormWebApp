@@ -1,12 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAffected, getAudit, getReport } from "@/lib/db";
+import { getAudit, getReport } from "@/lib/db";
 import { routeOutcome } from "@/lib/flags";
-import type {
-  AccidentData,
-  CauserData,
-  PhotoAnalysis,
-  PropertyItem,
-} from "@/lib/types";
+import type { AccidentData, PartyData, PhotoAnalysis } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -21,30 +16,21 @@ export async function GET(
   }
 
   const flags = JSON.parse(report.flags) as string[];
-  const causer = JSON.parse(report.causer || "{}") as CauserData;
+  const partyA = JSON.parse(report.partyA || "{}") as PartyData;
+  const partyB = JSON.parse(report.partyB || "{}") as PartyData;
   const accident = JSON.parse(report.accident || "{}") as AccidentData;
-  const properties = JSON.parse(report.properties || "[]") as PropertyItem[];
   const photoAnalysis = report.photoAnalysis
     ? (JSON.parse(report.photoAnalysis) as PhotoAnalysis)
     : null;
-  const affected = getAffected(params.reportId).map((a) => ({
-    idx: a.idx,
-    vehicle: JSON.parse(a.vehicle),
-    driver: JSON.parse(a.driver),
-    ack: a.ack,
-    ackAt: a.ackAt,
-    lookupFailed: !!a.lookupFailed,
-  }));
 
   return NextResponse.json({
     reportId: report.reportId,
     status: report.status,
     flags,
     routing: routeOutcome(flags),
-    causer,
+    partyA,
+    partyB,
     accident,
-    properties,
-    affected,
     photoAnalysis,
     audit: getAudit(params.reportId),
     createdAt: report.createdAt,

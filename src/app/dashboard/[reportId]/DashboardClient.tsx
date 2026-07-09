@@ -4,33 +4,23 @@ import { useEffect, useState } from "react";
 import FlagStrip from "@/components/FlagStrip";
 import type { PhotoAnalysis } from "@/lib/types";
 
+interface Party {
+  vehicle?: { number?: string; registrationType?: string; nationality?: string };
+  driver?: { identityNumber?: string; fullName?: string; mobile?: string };
+  submittedAt?: string;
+}
 interface ReportView {
   reportId: string;
   status: string;
   flags: string[];
   routing: string;
-  causer: {
-    vehicle?: { number?: string; registrationType?: string; nationality?: string };
-    driver?: { identityNumber?: string; fullName?: string; mobile?: string };
-    faultDeclaration?: { accepted: boolean; at: string };
-  };
+  partyA: Party;
+  partyB: Party;
   accident: {
-    governorate?: string;
-    area?: string;
-    locationText?: string;
     dateTime?: string;
     coordinates?: { lat: number; lng: number; accuracy?: number };
     injuries?: boolean;
   };
-  properties: { type: string; ownership: string; address: string }[];
-  affected: {
-    idx: number;
-    vehicle: { number?: string };
-    driver: { fullName?: string; identityNumber?: string };
-    ack: string;
-    ackAt: string | null;
-    lookupFailed: boolean;
-  }[];
   photoAnalysis: PhotoAnalysis | null;
   audit: { party: string | null; event: string; detail: string | null; at: string }[];
 }
@@ -75,50 +65,36 @@ export default function DashboardClient({ reportId }: { reportId: string }) {
                 <span className={`routing ${data.routing}`} style={{ padding: "2px 8px" }}>
                   {data.routing}
                 </span>
-                {data.causer?.faultDeclaration?.accepted && (
-                  <span className="mono" style={{ fontSize: 11, color: "var(--muted)", marginInlineStart: 8 }}>
-                    fault admitted {data.causer.faultDeclaration.at}
-                  </span>
-                )}
               </p>
             </div>
 
-            <div className="card">
-              <h2>Causer (at-fault)</h2>
-              <p className="mono" style={{ fontSize: 13 }}>
-                {data.causer?.driver?.fullName ?? data.causer?.driver?.identityNumber ?? "—"} ·
-                vehicle {data.causer?.vehicle?.number ?? "—"} · {data.causer?.vehicle?.registrationType ?? "—"}
-              </p>
-            </div>
-
-            <div className="card">
-              <h2>Affected parties</h2>
-              {(!data.affected || data.affected.length === 0) && <p className="muted">None.</p>}
-              {data.affected?.map((a) => (
-                <p key={a.idx} className="mono" style={{ fontSize: 13 }}>
-                  #{a.idx + 1} · {a.driver?.fullName ?? a.driver?.identityNumber} · vehicle {a.vehicle?.number} ·{" "}
-                  <b style={{ color: a.ack === "accepted" ? "var(--accent)" : a.ack === "rejected" ? "var(--critical)" : "var(--warn)" }}>
-                    {a.ack}
-                  </b>
-                  {a.lookupFailed ? " · lookup-failed" : ""}
-                </p>
-              ))}
-            </div>
-
-            {data.properties?.length > 0 && (
-              <div className="card">
-                <h2>Properties</h2>
-                {data.properties.map((p, i) => (
-                  <p key={i} className="mono" style={{ fontSize: 13 }}>{p.type} · {p.ownership} · {p.address}</p>
-                ))}
-              </div>
-            )}
+            {(["A", "B"] as const).map((k) => {
+              const p = k === "A" ? data.partyA : data.partyB;
+              const done = !!p?.submittedAt;
+              return (
+                <div className="card" key={k}>
+                  <h2>
+                    Party {k}{" "}
+                    <span className="mono" style={{ fontSize: 11, fontWeight: 700, color: done ? "var(--accent)" : "var(--muted)" }}>
+                      {done ? "submitted" : "not submitted"}
+                    </span>
+                  </h2>
+                  {done ? (
+                    <p className="mono" style={{ fontSize: 13 }}>
+                      {p.driver?.fullName ?? p.driver?.identityNumber ?? "—"} · vehicle{" "}
+                      {p.vehicle?.number ?? "—"} · {p.vehicle?.registrationType ?? "—"}
+                    </p>
+                  ) : (
+                    <p className="muted">Awaiting this party's section.</p>
+                  )}
+                </div>
+              );
+            })}
 
             <div className="card">
               <h2>Accident</h2>
               <p className="mono" style={{ fontSize: 13 }}>
-                {[data.accident?.governorate, data.accident?.area, data.accident?.locationText].filter(Boolean).join(" · ") || "—"}
-                {data.accident?.dateTime ? ` · ${data.accident.dateTime}` : ""}
+                {data.accident?.dateTime || "—"}
                 {data.accident?.coordinates ? ` · ${data.accident.coordinates.lat}, ${data.accident.coordinates.lng}` : ""}
                 {data.accident?.injuries ? " · INJURIES" : ""}
               </p>
@@ -145,15 +121,11 @@ export default function DashboardClient({ reportId }: { reportId: string }) {
                   <div style={{ fontSize: 13 }}>
                     <p>{data.photoAnalysis.result.damageSummary}</p>
                     <p className="mono" style={{ fontSize: 12, marginTop: 6 }}>
-                      indication:{" "}
-                      <b>
-                        {data.photoAnalysis.result.faultIndication.party}
+                      consistent with account:{" "}
+                      <b style={{ color: data.photoAnalysis.result.consistency.matchesDescription ? "var(--accent)" : "var(--warn)" }}>
+                        {data.photoAnalysis.result.consistency.matchesDescription ? "yes" : "review"}
                       </b>{" "}
-                      · confidence{" "}
-                      {Math.round(
-                        data.photoAnalysis.result.faultIndication.confidence * 100
-                      )}
-                      % · model {data.photoAnalysis.modelVersion}
+                      · model {data.photoAnalysis.modelVersion}
                     </p>
                     {data.photoAnalysis.result.consistency.discrepancies.length > 0 && (
                       <div style={{ marginTop: 6 }}>
@@ -174,7 +146,7 @@ export default function DashboardClient({ reportId }: { reportId: string }) {
                       </p>
                     )}
                     <p className="muted" style={{ fontSize: 11, marginTop: 6, fontStyle: "italic" }}>
-                      {data.photoAnalysis.result.faultIndication.limitations}
+                      {data.photoAnalysis.result.limitations}
                     </p>
                   </div>
                 )}

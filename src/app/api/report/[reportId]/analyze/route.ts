@@ -1,19 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import {
-  audit,
-  getAffected,
-  getLink,
-  getReport,
-  setPhotoAnalysis,
-} from "@/lib/db";
+import { audit, getLink, getReport, setPhotoAnalysis } from "@/lib/db";
 import {
   analyzePhotos,
   deriveAiFlags,
   type AnalysisContext,
   type AnalysisImage,
 } from "@/lib/photoAnalysis";
-import type { AccidentData, CauserData, PropertyItem } from "@/lib/types";
+import type { AccidentData, PartyData } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -65,10 +59,10 @@ export async function POST(
   }
   const { slug, images } = parsed.data;
 
-  // Only the causer's own link may trigger analysis for this report.
+  // Party A (who captures the shared accident details) triggers analysis.
   const link = getLink(slug);
   if (!link || link.reportId !== params.reportId || link.party !== "A") {
-    return NextResponse.json({ error: "not the causer's link" }, { status: 403 });
+    return NextResponse.json({ error: "not Party A's link" }, { status: 403 });
   }
 
   // Prefer client-supplied context (accident step, pre-submit); else derive from
@@ -77,22 +71,19 @@ export async function POST(
   if (parsed.data.context) {
     ctx = parsed.data.context;
   } else {
-    const causer = JSON.parse(report.causer || "{}") as CauserData;
+    const partyA = JSON.parse(report.partyA || "{}") as PartyData;
+    const partyB = JSON.parse(report.partyB || "{}") as PartyData;
     const accident = JSON.parse(report.accident || "{}") as AccidentData;
-    const properties = JSON.parse(report.properties || "[]") as PropertyItem[];
-    const affected = getAffected(params.reportId).map(
-      (a) => JSON.parse(a.vehicle) as { number?: string; registrationType?: string }
-    );
+    const bVeh = [partyB.vehicle?.number, partyB.vehicle?.registrationType]
+      .filter(Boolean)
+      .join(" · ");
     ctx = {
-      causerVehicle: [causer.vehicle?.number, causer.vehicle?.registrationType]
+      partyAVehicle: [partyA.vehicle?.number, partyA.vehicle?.registrationType]
         .filter(Boolean)
         .join(" · "),
-      affectedVehicles: affected
-        .map((v) => [v.number, v.registrationType].filter(Boolean).join(" · "))
-        .filter(Boolean),
+      partyBVehicles: bVeh ? [bVeh] : [],
       accidentDateTime: accident.dateTime,
       injuries: accident.injuries,
-      properties: properties.map((p) => `${p.type} (${p.ownership})`),
     };
   }
 

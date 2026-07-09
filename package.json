@@ -9,6 +9,7 @@
     "build": "next build",
     "start": "cross-env NODE_ENV=production tsx server.ts",
     "seed": "tsx scripts/seed.ts",
+    "test:flow": "node scripts/test-flow.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

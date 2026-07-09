@@ -133,6 +133,11 @@ db.exec(`
   // AI photo-analysis result (assistive; stored in the audit trail on the row).
   if (!has("photoAnalysis"))
     db.exec(`ALTER TABLE report ADD COLUMN photoAnalysis TEXT NOT NULL DEFAULT ''`);
+  // Neutral two-party model: each party's own section (vehicle + driver).
+  if (!has("partyA"))
+    db.exec(`ALTER TABLE report ADD COLUMN partyA TEXT NOT NULL DEFAULT '{}'`);
+  if (!has("partyB"))
+    db.exec(`ALTER TABLE report ADD COLUMN partyB TEXT NOT NULL DEFAULT '{}'`);
 }
 
 // --- report ---------------------------------------------------------------
@@ -169,6 +174,13 @@ export function setCauser(reportId: string, causer: object): void {
 export function setAccident(reportId: string, accident: object): void {
   db.prepare(`UPDATE report SET accident = ? WHERE reportId = ?`).run(
     JSON.stringify(accident),
+    reportId
+  );
+}
+export function setParty(reportId: string, party: Party, data: object): void {
+  const col = party === "A" ? "partyA" : "partyB";
+  db.prepare(`UPDATE report SET ${col} = ? WHERE reportId = ?`).run(
+    JSON.stringify(data),
     reportId
   );
 }

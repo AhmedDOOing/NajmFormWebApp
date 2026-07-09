@@ -96,8 +96,7 @@ const MANUAL: Flag[] = [
   "FAULT_DISPUTED",
   "AFFECTED_TIMEOUT",
   "AFFECTED_LOOKUP_FAILED",
-  // AI photo-analysis signals — assistive; always land in the human queue.
-  "AI_FAULT_MISMATCH",
+  // AI photo-analysis signal — assistive; always lands in the human queue.
   "AI_DAMAGE_INCONSISTENT",
 ];
 
@@ -239,13 +238,6 @@ export const FLAG_META: Record<
     en: "Property-only accident (no other driver)",
     ar: "حادث ممتلكات فقط (لا يوجد طرف آخر)",
     outcome: "Completes on the causer's submission + declaration.",
-  },
-  AI_FAULT_MISMATCH: {
-    severity: "warn",
-    en: "AI review: photos may not match the fault admission",
-    ar: "مراجعة مبدئية: الصور قد لا تطابق إقرار المتسبب",
-    outcome:
-      "Preliminary AI signal — NOT a verdict. Route to a human reviewer; never overrides the causer's admission.",
   },
   AI_DAMAGE_INCONSISTENT: {
     severity: "warn",

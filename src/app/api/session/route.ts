@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sessionSchema } from "@/lib/schema";
 import { createSession } from "@/lib/session";
+import { baseUrlFromRequest } from "@/lib/config";
 
 export const dynamic = "force-dynamic";
 
@@ -24,13 +25,14 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const result = createSession(parsed.data);
+  const result = createSession(parsed.data, baseUrlFromRequest(req));
 
   return NextResponse.json(
     {
       reportId: result.reportId,
       expiresAt: result.expiresAt,
-      causer: { url: result.causer.url },
+      partyA: { url: result.partyA.url },
+      partyB: { url: result.partyB.url },
     },
     { status: 201 }
   );

@@ -8,7 +8,8 @@ import { ArrowLeft, Copy, LayoutDashboard, Loader2, Sparkles } from "lucide-reac
 
 interface SessionResult {
   reportId: string;
-  causer: { url: string };
+  partyA: { url: string };
+  partyB: { url: string };
   expiresAt: string;
 }
 
@@ -20,9 +21,11 @@ export default function Home() {
 
   async function simulate() {
     setBusy(true);
+    // Demo capture from the voice call: full Party A details + just Party B's
+    // phone (so we can text Party B their own link). Either can be omitted.
     const body = {
       ttl: 24 * 60 * 60 * 1000,
-      causer: {
+      partyA: {
         vehicle: { nationality: "سعودية · Saudi", number: "1234", registrationType: "PRIVATE" },
         driver: {
           identityType: "الهوية الوطنية · National ID",
@@ -31,6 +34,9 @@ export default function Home() {
           mobile: "0551234567",
           email: "mohammed@example.com",
         },
+      },
+      partyB: {
+        driver: { mobile: "0509876543" },
       },
     };
     try {
@@ -88,11 +94,17 @@ export default function Home() {
       ) : (
         <div className="stagger flex w-full flex-col gap-3">
           <LinkCard
-            title="رابط الطرف المتسبب · Causer link"
-            note="يملأ البلاغ ويوقّع إقرار المسؤولية"
-            url={res.causer.url}
+            title="رابط الطرف الأول · Party A link"
+            note="يبدأ البلاغ ويُدخل بياناته"
+            url={res.partyA.url}
             onCopy={copy}
             primary
+          />
+          <LinkCard
+            title="رابط الطرف الثاني · Party B link"
+            note="يُدخل بياناته عبر رابطه الخاص"
+            url={res.partyB.url}
+            onCopy={copy}
           />
           <a
             href={`/dashboard/${res.reportId}`}
