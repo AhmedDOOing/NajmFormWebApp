@@ -4,7 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ArrowLeft, Copy, LayoutDashboard, Loader2, Phone, User, Users } from "lucide-react";
+import { ArrowLeft, Copy, LayoutDashboard, Loader2, User, Users } from "lucide-react";
 
 interface SessionResult {
   reportId: string;
@@ -54,15 +54,6 @@ const SCENARIOS: Scenario[] = [
     body: { partyA: A },
     showB: false, // only Party A's link — B is added later from A's done screen
     bNote: "",
-  },
-  {
-    key: "ab-phone",
-    icon: Phone,
-    ar: "الطرف الأول + جوال الطرف الثاني",
-    en: "Party A + Party B's phone",
-    body: { partyA: A, partyB: { driver: { mobile: Bfull.driver.mobile } } },
-    showB: true,
-    bNote: "الجوال مُعبّأ مسبقًا — يُرسل الرابط إليه · Phone prefilled — text B their link",
   },
   {
     key: "both",
