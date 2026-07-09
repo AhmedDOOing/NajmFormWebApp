@@ -42,7 +42,8 @@ type Scenario = {
   ar: string;
   en: string;
   body: object;
-  bNote: string; // what Party B's link will contain
+  showB: boolean; // whether Party B's link is surfaced on the landing
+  bNote: string; // what Party B's link contains (when shown)
 };
 const SCENARIOS: Scenario[] = [
   {
@@ -51,7 +52,8 @@ const SCENARIOS: Scenario[] = [
     ar: "الطرف الأول فقط",
     en: "Party A only",
     body: { partyA: A },
-    bNote: "فارغ — يملأ الطرف الثاني بياناته عبر رابطه · Empty — Party B fills their own",
+    showB: false, // only Party A's link — B is added later from A's done screen
+    bNote: "",
   },
   {
     key: "ab-phone",
@@ -59,6 +61,7 @@ const SCENARIOS: Scenario[] = [
     ar: "الطرف الأول + جوال الطرف الثاني",
     en: "Party A + Party B's phone",
     body: { partyA: A, partyB: { driver: { mobile: Bfull.driver.mobile } } },
+    showB: true,
     bNote: "الجوال مُعبّأ مسبقًا — يُرسل الرابط إليه · Phone prefilled — text B their link",
   },
   {
@@ -67,6 +70,7 @@ const SCENARIOS: Scenario[] = [
     ar: "كلا الطرفين",
     en: "Both parties",
     body: { partyA: A, partyB: Bfull },
+    showB: true,
     bNote: "البيانات مُعبّأة مسبقًا · Details prefilled",
   },
 ];
@@ -156,12 +160,14 @@ export default function Home() {
             onCopy={copy}
             primary
           />
-          <LinkCard
-            title="رابط الطرف الثاني · Party B link"
-            note={scenario?.bNote ?? ""}
-            url={res.partyB.url}
-            onCopy={copy}
-          />
+          {scenario?.showB && (
+            <LinkCard
+              title="رابط الطرف الثاني · Party B link"
+              note={scenario.bNote}
+              url={res.partyB.url}
+              onCopy={copy}
+            />
+          )}
           <div className="mt-1 flex items-center justify-between">
             <a
               href={`/dashboard/${res.reportId}`}
