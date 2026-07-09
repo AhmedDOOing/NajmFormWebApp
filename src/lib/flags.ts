@@ -93,6 +93,12 @@ const MANUAL: Flag[] = [
   "PARTY_B_UNVERIFIED",
   "SHARED_DISPUTE",
   "PARTY_ABSENT",
+  "FAULT_DISPUTED",
+  "AFFECTED_TIMEOUT",
+  "AFFECTED_LOOKUP_FAILED",
+  // AI photo-analysis signals — assistive; always land in the human queue.
+  "AI_FAULT_MISMATCH",
+  "AI_DAMAGE_INCONSISTENT",
 ];
 
 export function routeOutcome(flags: string[]): RoutingOutcome {
@@ -209,6 +215,44 @@ export const FLAG_META: Record<
     en: "Other driver not present — one-sided report",
     ar: "الطرف الآخر غير موجود — بلاغ من طرف واحد",
     outcome: "One-sided report with a declared reason → manual review.",
+  },
+  FAULT_DISPUTED: {
+    severity: "critical",
+    en: "Affected party rejected the fault admission",
+    ar: "الطرف المتضرر لم يوافق على إقرار المتسبب",
+    outcome: "Block auto-completion → manual review / police escalation.",
+  },
+  AFFECTED_TIMEOUT: {
+    severity: "warn",
+    en: "Affected party didn't respond in time",
+    ar: "الطرف المتضرر لم يستجب خلال المهلة",
+    outcome: "Report held; escalate — the admission was never acknowledged.",
+  },
+  AFFECTED_LOOKUP_FAILED: {
+    severity: "warn",
+    en: "Affected party couldn't be looked up",
+    ar: "تعذّر التحقق من بيانات الطرف المتضرر",
+    outcome: "Added via declared fallback → manual review.",
+  },
+  PROPERTY_ONLY: {
+    severity: "info",
+    en: "Property-only accident (no other driver)",
+    ar: "حادث ممتلكات فقط (لا يوجد طرف آخر)",
+    outcome: "Completes on the causer's submission + declaration.",
+  },
+  AI_FAULT_MISMATCH: {
+    severity: "warn",
+    en: "AI review: photos may not match the fault admission",
+    ar: "مراجعة مبدئية: الصور قد لا تطابق إقرار المتسبب",
+    outcome:
+      "Preliminary AI signal — NOT a verdict. Route to a human reviewer; never overrides the causer's admission.",
+  },
+  AI_DAMAGE_INCONSISTENT: {
+    severity: "warn",
+    en: "AI review: damage looks inconsistent with the account",
+    ar: "مراجعة مبدئية: الأضرار قد لا تتسق مع الرواية",
+    outcome:
+      "Preliminary AI signal — NOT a verdict. Route to a human reviewer to check the discrepancy.",
   },
 };
 

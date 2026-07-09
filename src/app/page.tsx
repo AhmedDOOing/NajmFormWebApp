@@ -8,13 +8,12 @@ import { ArrowLeft, Copy, LayoutDashboard, Loader2, Sparkles } from "lucide-reac
 
 interface SessionResult {
   reportId: string;
-  partyA: { url: string };
-  partyB: { url: string };
+  causer: { url: string };
   expiresAt: string;
 }
 
-// Premium demo landing: simulates the voice agent's POST /api/session. Party A
-// prefill is rich (captured on the call); Party B is minimal.
+// Premium demo landing: simulates the voice agent's POST /api/session. eTraffic
+// model — mints the causer's (at-fault filer's) registered details + link.
 export default function Home() {
   const [res, setRes] = useState<SessionResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -23,24 +22,15 @@ export default function Home() {
     setBusy(true);
     const body = {
       ttl: 24 * 60 * 60 * 1000,
-      prefill: {
-        A: {
-          city: "الرياض",
-          district: "العليا",
+      causer: {
+        vehicle: { nationality: "سعودية · Saudi", number: "1234", registrationType: "PRIVATE" },
+        driver: {
+          identityType: "الهوية الوطنية · National ID",
+          identityNumber: "1023456789",
           fullName: "محمد عبدالله القحطاني",
-          nationalId: "1023456789",
           mobile: "0551234567",
-          plate: "أ ب ج 4821",
-          makeModel: "تويوتا كامري",
-          accidentType: "اصطدام خلفي",
-          otherPartyStatus: "present",
-          injuries: false,
-          _agentFilledFields: [
-            "city", "district", "fullName", "nationalId", "mobile", "plate",
-            "makeModel", "accidentType", "otherPartyStatus",
-          ],
+          email: "mohammed@example.com",
         },
-        B: { mobile: "0509876543", _agentFilledFields: ["mobile"] },
       },
     };
     try {
@@ -98,9 +88,9 @@ export default function Home() {
       ) : (
         <div className="stagger flex w-full flex-col gap-3">
           <LinkCard
-            title="رابط البلاغ · Report link"
-            note="يُرسل للسائق — يختار دوره ويكمل البلاغ"
-            url={res.partyA.url}
+            title="رابط الطرف المتسبب · Causer link"
+            note="يملأ البلاغ ويوقّع إقرار المسؤولية"
+            url={res.causer.url}
             onCopy={copy}
             primary
           />

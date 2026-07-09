@@ -1,28 +1,24 @@
 import { DEFAULT_LINK_TTL_MS, HOST_BASE_URL } from "./config";
-import {
-  audit,
-  getReport,
-  insertLink,
-  insertReport,
-} from "./db";
+import { audit, getReport, insertLink, insertReport, setCauser } from "./db";
 import { newReportId, newSlug } from "./slug";
-import type { Party, Prefill } from "./types";
+import type { DriverInfo, VehicleInfo } from "./types";
 
 export interface CreateSessionInput {
   reportId?: string;
   ttl?: number; // ms
-  prefill: { A: Prefill; B: Prefill };
+  // The causer's registered details (from the voice agent / their identity).
+  causer?: { vehicle?: Partial<VehicleInfo>; driver?: Partial<DriverInfo> };
 }
 
 export interface CreateSessionResult {
   reportId: string;
-  partyA: { url: string; slug: string };
-  partyB: { url: string; slug: string };
+  causer: { url: string; slug: string };
   expiresAt: string;
 }
 
-// Mints one report + TWO opaque slugs (one per party). Each party's predefined
-// payload is stored server-side against its slug — the slug carries NO PII.
+// eTraffic model: mint one report + ONE opaque link for the causer (the only
+// filer). Affected parties are added later by lookup and get their own ack
+// links. The slug carries NO PII — the causer's details live server-side.
 export function createSession(input: CreateSessionInput): CreateSessionResult {
   const now = new Date();
   const ttl = input.ttl ?? DEFAULT_LINK_TTL_MS;
@@ -31,34 +27,28 @@ export function createSession(input: CreateSessionInput): CreateSessionResult {
 
   let reportId = input.reportId;
   if (!reportId) reportId = newReportId();
-  if (getReport(reportId)) {
-    // Extremely unlikely collision on the random id; regenerate once.
-    reportId = newReportId();
-  }
+  if (getReport(reportId)) reportId = newReportId();
 
   insertReport({ reportId, createdAt, expiresAt });
+  setCauser(reportId, {
+    vehicle: input.causer?.vehicle ?? {},
+    driver: input.causer?.driver ?? {},
+  });
   audit(reportId, "session_created", createdAt);
 
-  const mint = (party: Party, prefill: Prefill) => {
-    const slug = newSlug();
-    insertLink({
-      slug,
-      reportId: reportId!,
-      party,
-      prefill: JSON.stringify(prefill ?? {}),
-      usedAt: null,
-      expiresAt,
-    });
-    return { slug, url: `${HOST_BASE_URL}/r/${slug}` };
-  };
-
-  const a = mint("A", input.prefill.A ?? {});
-  const b = mint("B", input.prefill.B ?? {});
+  const slug = newSlug();
+  insertLink({
+    slug,
+    reportId,
+    party: "A", // the causer's filing link
+    prefill: "{}",
+    usedAt: null,
+    expiresAt,
+  });
 
   return {
     reportId,
-    partyA: a,
-    partyB: b,
+    causer: { slug, url: `${HOST_BASE_URL}/r/${slug}` },
     expiresAt,
   };
 }

@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import type {
+  AffectedRow,
   LinkRow,
   Party,
   PartyLocation,
@@ -93,6 +94,22 @@ db.exec(`
     at        TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_audit_report ON audit(reportId);
+
+  -- eTraffic model: affected parties added by the causer via registry lookup.
+  -- Read-only registry data + an opaque acknowledgment link + accept/reject.
+  CREATE TABLE IF NOT EXISTS affected (
+    reportId  TEXT NOT NULL REFERENCES report(reportId),
+    idx       INTEGER NOT NULL,
+    vehicle   TEXT NOT NULL,
+    driver    TEXT NOT NULL,
+    ackSlug   TEXT NOT NULL UNIQUE,
+    ack       TEXT NOT NULL DEFAULT 'pending',
+    ackAt     TEXT,
+    lookupFailed INTEGER NOT NULL DEFAULT 0,
+    addedAt   TEXT NOT NULL,
+    PRIMARY KEY (reportId, idx)
+  );
+  CREATE INDEX IF NOT EXISTS idx_affected_report ON affected(reportId);
 `);
 
 // --- lightweight migrations (add columns to pre-existing DBs) --------------
@@ -106,6 +123,16 @@ db.exec(`
     db.exec(`ALTER TABLE report ADD COLUMN phase TEXT NOT NULL DEFAULT 'partyA'`);
   if (!has("verifyAttempts"))
     db.exec(`ALTER TABLE report ADD COLUMN verifyAttempts INTEGER NOT NULL DEFAULT 0`);
+  // eTraffic model: the causer fills everything; content lives as JSON on the row.
+  if (!has("causer"))
+    db.exec(`ALTER TABLE report ADD COLUMN causer TEXT NOT NULL DEFAULT '{}'`);
+  if (!has("accident"))
+    db.exec(`ALTER TABLE report ADD COLUMN accident TEXT NOT NULL DEFAULT '{}'`);
+  if (!has("properties"))
+    db.exec(`ALTER TABLE report ADD COLUMN properties TEXT NOT NULL DEFAULT '[]'`);
+  // AI photo-analysis result (assistive; stored in the audit trail on the row).
+  if (!has("photoAnalysis"))
+    db.exec(`ALTER TABLE report ADD COLUMN photoAnalysis TEXT NOT NULL DEFAULT ''`);
 }
 
 // --- report ---------------------------------------------------------------
@@ -129,6 +156,82 @@ export function getReport(reportId: string): ReportRow | undefined {
 
 export function setReportStatus(reportId: string, status: ReportStatus): void {
   db.prepare(`UPDATE report SET status = ? WHERE reportId = ?`).run(status, reportId);
+}
+
+// --- eTraffic report content (causer fills everything) --------------------
+
+export function setCauser(reportId: string, causer: object): void {
+  db.prepare(`UPDATE report SET causer = ? WHERE reportId = ?`).run(
+    JSON.stringify(causer),
+    reportId
+  );
+}
+export function setAccident(reportId: string, accident: object): void {
+  db.prepare(`UPDATE report SET accident = ? WHERE reportId = ?`).run(
+    JSON.stringify(accident),
+    reportId
+  );
+}
+export function setProperties(reportId: string, properties: object[]): void {
+  db.prepare(`UPDATE report SET properties = ? WHERE reportId = ?`).run(
+    JSON.stringify(properties),
+    reportId
+  );
+}
+export function setPhotoAnalysis(reportId: string, analysis: object): void {
+  db.prepare(`UPDATE report SET photoAnalysis = ? WHERE reportId = ?`).run(
+    JSON.stringify(analysis),
+    reportId
+  );
+}
+
+// --- affected parties (added by lookup; acknowledge via opaque slug) -------
+
+export function insertAffected(a: {
+  reportId: string;
+  idx: number;
+  vehicle: object;
+  driver: object;
+  ackSlug: string;
+  lookupFailed: boolean;
+  addedAt: string;
+}): void {
+  db.prepare(
+    `INSERT INTO affected (reportId, idx, vehicle, driver, ackSlug, ack, lookupFailed, addedAt)
+     VALUES (@reportId, @idx, @vehicle, @driver, @ackSlug, 'pending', @lookupFailed, @addedAt)`
+  ).run({
+    reportId: a.reportId,
+    idx: a.idx,
+    vehicle: JSON.stringify(a.vehicle),
+    driver: JSON.stringify(a.driver),
+    ackSlug: a.ackSlug,
+    lookupFailed: a.lookupFailed ? 1 : 0,
+    addedAt: a.addedAt,
+  });
+}
+
+export function getAffected(reportId: string): AffectedRow[] {
+  return db
+    .prepare(`SELECT * FROM affected WHERE reportId = ? ORDER BY idx`)
+    .all(reportId) as AffectedRow[];
+}
+
+export function getAffectedByAckSlug(ackSlug: string): AffectedRow | undefined {
+  return db.prepare(`SELECT * FROM affected WHERE ackSlug = ?`).get(ackSlug) as
+    | AffectedRow
+    | undefined;
+}
+
+export function setAck(
+  ackSlug: string,
+  ack: "accepted" | "rejected",
+  at: string
+): void {
+  db.prepare(`UPDATE affected SET ack = ?, ackAt = ? WHERE ackSlug = ?`).run(
+    ack,
+    at,
+    ackSlug
+  );
 }
 
 export function setPhase(reportId: string, phase: Phase): void {

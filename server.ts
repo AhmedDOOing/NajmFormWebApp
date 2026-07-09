@@ -117,7 +117,9 @@ app.prepare().then(() => {
     });
   });
 
-  httpServer.listen(port, () => {
+  // Bind 0.0.0.0 (all IPv4 interfaces) so a phone on the same Wi-Fi can reach the
+  // dev server by LAN IP — plain listen(port) binds IPv6-only on macOS.
+  httpServer.listen(port, "0.0.0.0", () => {
     // eslint-disable-next-line no-console
     console.log(`▶ Najm handoff ready on http://localhost:${port}  (dev=${dev})`);
   });

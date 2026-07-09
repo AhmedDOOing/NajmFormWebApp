@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sessionSchema } from "@/lib/schema";
 import { createSession } from "@/lib/session";
-import { startPartyBSla } from "@/lib/realtime";
 
 export const dynamic = "force-dynamic";
 
-// POST /api/session — the voice agent calls this at hand-off time.
-// Body: { reportId?, ttl?, prefill: { A:{...}, B:{...} } }
-// Returns: { reportId, partyA:{url}, partyB:{url} }
+// POST /api/session — the voice agent calls this. eTraffic model: mints one
+// report + the causer's filing link (the only filer).
+// Body: { reportId?, ttl?, causer?: { vehicle, driver } }
+// Returns: { reportId, causer: { url } }
 export async function POST(req: NextRequest) {
   let body: unknown;
   try {
@@ -26,15 +26,11 @@ export async function POST(req: NextRequest) {
 
   const result = createSession(parsed.data);
 
-  // Kick off the Party-B SLA clock the moment the links are minted.
-  startPartyBSla(result.reportId);
-
   return NextResponse.json(
     {
       reportId: result.reportId,
       expiresAt: result.expiresAt,
-      partyA: { url: result.partyA.url },
-      partyB: { url: result.partyB.url },
+      causer: { url: result.causer.url },
     },
     { status: 201 }
   );

@@ -1,57 +1,65 @@
 import { cookies } from "next/headers";
-import { getLink, getLinkForParty, getReport, getSubmissions } from "@/lib/db";
-import type { Party, Prefill } from "@/lib/types";
+import { getAffectedByAckSlug, getLink, getReport } from "@/lib/db";
+import type { AccidentData, CauserData, PropertyItem, VehicleInfo } from "@/lib/types";
 import { langCookieName, parseLocale } from "@/lib/locale";
-import ReportSession from "@/components/ReportSession";
+import CauserFlow from "@/components/CauserFlow";
+import AffectedAck from "@/components/AffectedAck";
 import RecoveryPage from "@/components/RecoveryPage";
 
 export const dynamic = "force-dynamic";
 
-// GET /r/:slug — the single entry link. Resolves the OPAQUE slug to its report,
-// then SSR-loads BOTH parties' pre-fill for this one trusted device (never a
-// public API — no PII leak, no PII in the URL). The driver picks their party.
+// GET /r/:slug — one opaque token. It's either the CAUSER's filing link or an
+// AFFECTED party's acknowledgment link; resolve server-side and route. No PII
+// in the URL; details are SSR'd only to the holder of the link.
 export default function ShortLinkPage({ params }: { params: { slug: string } }) {
-  const aLink = getLinkForPartyBySlug(params.slug, "A");
-  const bLink = getLinkForPartyBySlug(params.slug, "B");
-
-  // Missing / unknown slug -> recovery page, not a raw 404.
-  if (!aLink || !bLink) {
-    return <RecoveryPage reason="not_found" />;
+  // 1) Causer filing link?
+  const causerLink = getLink(params.slug);
+  if (causerLink && causerLink.party === "A") {
+    if (new Date(causerLink.expiresAt).getTime() < Date.now())
+      return <RecoveryPage reason="expired" reportId={causerLink.reportId} />;
+    const report = getReport(causerLink.reportId);
+    if (!report || report.status === "expired")
+      return <RecoveryPage reason="expired" reportId={causerLink.reportId} />;
+    const saved = parseLocale(cookies().get(langCookieName(report.reportId, "A"))?.value);
+    return (
+      <CauserFlow
+        reportId={report.reportId}
+        slug={causerLink.slug}
+        causer={JSON.parse(report.causer || "{}") as CauserData}
+        initialLang={saved}
+      />
+    );
   }
 
-  // Expired link -> recovery page.
-  if (new Date(aLink.expiresAt).getTime() < Date.now()) {
-    return <RecoveryPage reason="expired" reportId={aLink.reportId} />;
+  // 2) Affected acknowledgment link?
+  const aff = getAffectedByAckSlug(params.slug);
+  if (aff) {
+    const report = getReport(aff.reportId);
+    if (!report) return <RecoveryPage reason="not_found" />;
+    const causer = JSON.parse(report.causer || "{}") as CauserData;
+    const accident = JSON.parse(report.accident || "{}") as AccidentData;
+    const properties = JSON.parse(report.properties || "[]") as PropertyItem[];
+    const saved = parseLocale(cookies().get(langCookieName(report.reportId, "B"))?.value);
+    return (
+      <AffectedAck
+        ackSlug={aff.ackSlug}
+        reportId={report.reportId}
+        initialLang={saved}
+        ackStatus={aff.ack}
+        summary={{
+          causerVehicle: (causer.vehicle ?? {}) as VehicleInfo,
+          affectedVehicle: JSON.parse(aff.vehicle) as VehicleInfo,
+          accident: {
+            locationText: accident.locationText,
+            dateTime: accident.dateTime,
+            area: accident.area,
+          },
+          properties,
+        }}
+      />
+    );
   }
 
-  const report = getReport(aLink.reportId);
-  if (!report || report.status === "expired") {
-    return <RecoveryPage reason="expired" reportId={aLink.reportId} />;
-  }
-
-  const doneParties = getSubmissions(aLink.reportId).map((s) => s.party) as Party[];
-  const saved = parseLocale(
-    cookies().get(langCookieName(aLink.reportId, "A"))?.value
-  );
-
-  return (
-    <ReportSession
-      reportId={aLink.reportId}
-      aSlug={aLink.slug}
-      aPrefill={JSON.parse(aLink.prefill) as Prefill}
-      bSlug={bLink.slug}
-      bPrefill={JSON.parse(bLink.prefill) as Prefill}
-      initialFlags={JSON.parse(report.flags) as string[]}
-      initialLang={saved}
-      doneParties={doneParties}
-    />
-  );
-}
-
-// Resolve the opened slug to its report, then fetch the given party's link on
-// that report (so one entry link exposes both parties for the single device).
-function getLinkForPartyBySlug(slug: string, party: Party) {
-  const entry = getLink(slug);
-  if (!entry) return undefined;
-  return getLinkForParty(entry.reportId, party);
+  // 3) Unknown / expired.
+  return <RecoveryPage reason="not_found" />;
 }
