@@ -1,299 +1,128 @@
-# Najm — Voice→Chat Accident-Report Handoff
+# Najm — Voice→Web Accident Report POC
 
-A web app that receives an in-progress accident report from a **voice agent** and lets
-**two drivers (Party A and Party B)** finish it on their phones — each via a short SMS
-link that opens a **pre-filled** form. The two sessions are aware of each other in real
-time over **WebSockets** (presence + a "sync barrier"): the report only advances once
-both sides submit, or a timeout/escalation fires.
+A driver calls **Najm's voice agent (Hamsa)** after a traffic accident. When the call
+ends, Hamsa POSTs a webhook here; the server **mints a pre-filled accident-report
+link**, **SMSes it to the at-fault driver** (simulated or real Twilio), and the driver
+completes the report on their phone in a few taps. Each affected party then gets an
+**acknowledgment link** to accept or reject the fault admission — they never fill a form.
 
-## The three things this gets right
+A live **/phone** page shows the whole thing happening in real time: incoming webhook
+events on the left, phone mockups "receiving" the SMS (with tappable links) on the right
+— that's the demo surface.
 
-1. **Link shortener** — the voice platform calls `POST /api/session`; the server mints
-   one report + **two** short links (one per party) and returns them.
-2. **Slug → predefined values** — each slug is an **opaque `nanoid` token** that maps
-   server-side to a stored `prefill` payload. **No driver PII is ever in the URL** — the
-   slug is a key, not a data carrier. The form is hydrated server-side (SSR).
-3. **WebSocket presence & sync** — both parties join a room keyed by `reportId`, see each
-   other's live status (connected / filling / submitted / absent), and the server
-   enforces the sync barrier + grace/SLA timeouts.
-
-## Driver flow (built for an intense roadside moment)
-
-The form is a **confirm flow, not a fill flow** — Party A's data is already captured on
-the call, so the app asks the driver to *confirm* it, not re-type it. It's an
-**auto-advancing wizard**: one decision per screen, big tap targets, and tapping an
-answer advances automatically (no "Next" clicks). Happy path is ~4–5 taps.
-
-0. **Language gate** — opening `/r/<slug>` first shows a one-tap "choose your language"
-   screen (العربية / English, each with an inline SVG flag). The choice sets the session
-   locale + text direction and is persisted in a per-report+party cookie, so a refresh or
-   resumed link never re-prompts (decided server-side in the resolver). The in-form header
-   toggle still lets the driver switch afterward, and each party's language shows on the
-   dashboard.
-1. **Safety first** — the injury triage is the very first screen. "Yes" opens an
-   emergency panel (one-tap Call 997) and flags `INJURY`; "No" auto-advances.
-2. **Location** — a WhatsApp-style picker: dark map with a pulsing current-location dot,
-   a **"Send my current location"** row (real GPS accuracy in metres), and a nearby-places
-   list. Selecting collapses into a shared-pin card; denied/indoor falls back to manual
-   entry (`LOC_MANUAL`). The captured pin is emitted live to the dashboard + other party.
-   This step does **not** auto-advance — the driver sees the confirmed pin, then taps Next.
-3. **Review** — Party A sees call-captured fields as green-checked confirm rows tagged
-   *"from the call"*, each with an inline **Edit**. One **"Details are correct"** button
-   moves on. Party B (minimal prefill) sees only the essentials to enter, required fields
-   highlighted, everything else under **More details**.
-4. **Photos** — one tap to add, or **Later** (flags `PHOTO_PENDING`).
-5. **Confirm & send** — optional statement + a single **"I agree & submit"** button
-   (the tap is the timestamped consent affirmation).
-
-Action-changing edge cases (injury, hit-and-run, uninsured, …) surface as a compact alert
-banner; low-signal `info` flags stay off the driver's screen but still drive routing and
-show on the dashboard. A slim top strip shows the other party's live presence throughout.
-
-## Branding & theme
-
-Dark **Najm-green** theme driven entirely by CSS custom properties in one place
-(`src/app/globals.css` `:root`). All component styles derive from the brand tokens —
-**no hard-coded colors in components**. Swap `--najm` / `--najm-bright` (or the font) and
-the whole app re-themes with no other edits:
-
-```css
---najm: #00a650;  --najm-bright: #25c56e;  --najm-deep: #06231a;
---bg: #0c1512;  --surface: #131e19;  --line: #26352d;  --ink: #eaf3ec;  --muted: #8fa398;
+```
+Hamsa voice call
+   └─ call.ended webhook ──▶ POST /api/webhook/hamsa
+                              ├─ map outcomeResult → causer prefill + intake
+                              ├─ mint report + opaque causer link  (/r/<slug>)
+                              ├─ SMS the link (Twilio or simulated)
+                              └─ everything logged to the live feed
+Causer opens /r/<slug>
+   └─ language gate → injury triage → confirm details (pre-filled "from the call")
+     → add affected parties / properties → accident details + photos (AI analysis)
+     → fault declaration → submit
+        ├─ ack link minted + SMSed per affected party
+        └─ affected opens /r/<ack-slug> → Accept | Reject (no data entry)
+             all accept → complete · any reject → FAULT_DISPUTED → manual review
+Watch it live:  /phone   ·   per-report status:  /dashboard/<reportId>
 ```
 
-Type is **IBM Plex Sans Arabic** via `next/font/google` (weights 400–700), applied to both
-Arabic and Latin so the two scripts harmonize (`src/app/layout.tsx`). If Najm supplies a
-licensed face, register it with `next/font/local` and point `--font-brand` at it — the
-Google font stays as the fallback. Accessibility: visible `:focus-visible` outlines, tap
-targets ≥ 44px, and `prefers-reduced-motion` disables the pulsing location halo.
-
-## eTraffic model — one at-fault filer + affected acknowledgment (current flow)
+## eTraffic model
 
 Mirrors Bahrain's eTraffic "Report Traffic Accidents": **only the causer (at-fault
-driver) fills the report.** The affected driver is **added by registry lookup** (not typed)
-and receives an **acknowledgment link** — they only Accept or Reject the fault admission,
-they never fill a form.
+driver) files.** Affected parties are added to the report and receive an acknowledgment
+link — accept/reject only. Webhook-minted links skip the "which driver are you?"
+chooser (the voice agent already established the roles); manually minted links
+(`npm run seed` or the landing page) keep it for demo purposes.
 
-```
-Causer link (/r/<slug>) → language gate → Report home (3 cards):
-   • Causer card   — read-only, pre-filled (vehicle no. + registration + ID)
-   • Affected card — "+ add" → LOOKUP by vehicle no. + ID → read-only registry detail
-   • Properties    — "+ add" → modal (type + ownership + address)
-→ Accident details (governorate/area, location text 80ch, date, time, photos, coordinates+map)
-→ Fault declaration (required, timestamped admission + consent) → Submit
-→ each affected party gets an opaque acknowledgment link:
-      /r/<ack-slug> → read-only summary → Accept | Reject (no data entry)
-      all Accept → complete + route;  Reject → FAULT_DISPUTED → manual review / police
-```
+Edge cases → flags: `INJURY` (emergency, overrides everything), `FAULT_DISPUTED`,
+`AFFECTED_LOOKUP_FAILED`, `PROPERTY_ONLY`, `PHOTO_PENDING`, `LOC_MANUAL`, plus the
+assistive `AI_FAULT_MISMATCH` / `AI_DAMAGE_INCONSISTENT` (always route to a human —
+the AI never decides fault; see `src/lib/photoAnalysis.ts`).
 
-**Registry lookup** is the key integration (`src/lib/etraffic.ts` → `lookupParty()`): a dev
-stub with seeded records now; **⚠ wire the real registry (KSA: Najm/Elm/Absher; Bahrain:
-traffic registry) before production — client-confirmation item.**
-
-Roles: **Causer** (الطرف المتسبب, only filer) · **Affected** (الطرف المتضرر, added by lookup,
-one or more, acknowledge only) · **Property** (objects hit, no driver).
-
-Edge cases → flags: `INJURY` (emergency, overrides), `FAULT_DISPUTED` (reject → manual/police),
-`AFFECTED_TIMEOUT` (never acknowledged → held), `AFFECTED_LOOKUP_FAILED` (declared fallback →
-review), `PROPERTY_ONLY` (no other driver → completes on submission). The causer's fault
-declaration and every accept/reject are timestamped in the audit trail.
-
-Endpoints: `POST /api/session` (mint causer link), `POST /api/lookup`,
-`POST /api/report/:id/submit` (causer files), `POST /api/report/:id/analyze` (AI photo
-analysis, causer link only), `POST /api/ack/:ackSlug` (accept/reject),
-`GET /api/report/:id` (dashboard). The old two-sided co-fill / single-device handover flow
-was removed.
-
-## AI photo analysis & damage summary (assistive, human-reviewed)
-
-As the causer adds photos on the accident step, the scene photos are analyzed by Claude vision
-**live, right under the upload**, producing a **preliminary** read: a plain-language damage
-summary, per-image notes, consistency check vs. the reported account, image-quality issues, and
-a *conservative* fault indication. Latency is kept low by downscaling images client-side
-(≤1280px, JPEG) before upload, an output cap scaled to the image count, and a concise-output
-prompt. The preview only stores the result — the authoritative routing (including the AI flags)
-is applied once, on `/submit`.
-
-**This is assistive, never authoritative.** Design guarantees:
-
-- **Server-side only.** `src/lib/photoAnalysis.ts` runs the Anthropic call (`claude-sonnet-5`,
-  thinking disabled, forced-tool strict JSON → zod-validated, one retry then `status:"failed"`).
-  The API key never reaches the browser; the client POSTs base64 images to
-  `POST /api/report/:id/analyze`, which never persists the raw bytes — only the structured,
-  self-contained result (`{ reportId, status, modelVersion, at, imageCount, result }`) is
-  stored on the report (`photoAnalysis` column) and written to the audit trail. That record is
-  portable — lift it into its own Postgres/Supabase table later with no reshaping.
-- **Never decides fault.** The result is labelled *"تحليل مبدئي — للمراجعة / Preliminary
-  analysis — for review"* everywhere (done screen + dashboard), never "verdict/confirmed".
-  It never overrides the causer's admission. Two signals only *add* a manual-review flag
-  (derived in one place, `deriveAiFlags`, and applied on submit): `AI_DAMAGE_INCONSISTENT`
-  (consistency mismatch / discrepancies) and `AI_FAULT_MISMATCH` (photos point at the *other*
-  party above a confidence threshold). Both route to `MANUAL_REVIEW`; when raised, the report is
-  `escalated` instead of auto-completing. No path auto-approves or auto-closes a claim from the
-  AI output.
-- **Graceful degradation.** If `ANTHROPIC_API_KEY` is unset, a clearly-marked `stub` result is
-  returned (fault `undetermined`) so the flow stays testable in dev.
-  **>>> Set `ANTHROPIC_API_KEY` in prod. <<<**
-
-## (retired) Single-device handover
-
-The primary flow is **one phone, one continuous session, sequential** — not two links
-syncing live. Party A opens their link and it drives the whole thing:
-
-```
-Language gate → Party A fills → [LOCK & HANDOVER] → [B identity check] → Party B fills → submit
-```
-
-- **A fills** their part, then hits a hard **"hand the phone to the other driver"** screen.
-- **A's zone locks** — enforced **server-side** (the submit endpoint returns `423` for any
-  Party A edit once `report.phase != 'partyA'`), not just hidden.
-- A light **B-identity check** (last 4 digits of B's captured mobile) gates entry to B's
-  zone; B's statement/consent are **never pre-filled** and are inaccessible until it passes.
-  Retry N → `PARTY_B_UNVERIFIED` → escalate (existing handling).
-- **B fills** their part (can flag `SHARED_DISPUTE`) → submit → same completion + routing.
-- **"The other driver isn't here"** branch → one-sided report (`PARTY_B_TIMEOUT`) + hands
-  back B's remote link to send.
-- **Resume**: reopening A's link after handover resumes in the B phase with A locked — it
-  never reopens A's editable form. State lives in `report.phase`
-  (`partyA → handover → partyB → complete`); handover + verify events are timestamped in the
-  audit trail.
-
-The two-link + Socket.IO presence path stays as the **remote fallback** (Party B's own link
-still works, unchanged) — the single-device path doesn't depend on it.
-
-Endpoints: `POST /handover`, `POST /verify-b`, `POST /absent` (all authorized by A's slug),
-plus the `423` A-lock guard on the submit route.
-
-## Stack
-
-- **Next.js 14 (App Router, TypeScript)** — frontend + API routes + SSR form page.
-- **Custom Node server (`server.ts`)** integrating **Socket.IO** for persistent WS.
-- **SQLite via `better-sqlite3`** (local dev). Swap points to Redis (presence/pubsub) +
-  Postgres (durable report/link) are noted in `src/lib/db.ts` and `src/lib/realtime.ts`.
-- **`nanoid`** opaque slugs, **`zod`** validation. RTL-first, Arabic-primary UI.
-
-## Run
+## Quickstart
 
 ```bash
 npm install
-npm run dev          # custom server + Socket.IO on http://localhost:3000
+npm run dev            # http://localhost:3000
+npm run simulate:call  # terminal 2 — fires a full fake Hamsa call sequence
 ```
 
-Open <http://localhost:3000> and click **POST /api/session** to mint a demo report, or
-use the seed script / curl below.
+Open <http://localhost:3000/phone> **before** running `simulate:call` and watch the
+call land: feed events stream in, the causer's phone frame receives the SMS, and the
+link in the bubble opens the real pre-filled flow. Full walkthrough:
+[docs/demo-script.md](docs/demo-script.md).
 
-```bash
-npm run seed         # mints one demo report and prints the two links + dashboard
-```
+## Environment
 
-## Simulate the voice agent (exact curl)
+| Var | Required | Purpose |
+|---|---|---|
+| `NAJM_BASE_URL` | for ngrok/prod | Base URL minted into links + SMS bodies. Default `http://localhost:3000`. |
+| `HAMSA_WEBHOOK_SECRET` | recommended | Bearer token the webhook requires. Unset = open (local dev only). |
+| `ANTHROPIC_API_KEY` | optional | Enables real AI photo analysis (`claude-sonnet-5`); otherwise a marked stub. |
+| `TWILIO_ACCOUNT_SID` `TWILIO_AUTH_TOKEN` `TWILIO_FROM` | optional | All three set → real SMS send attempts; otherwise simulated. Never blocks the flow. |
+| `PORT` | optional | Dev server port (default 3000). |
 
-Party A's prefill is rich (captured on the call); Party B's is minimal (they never spoke
-to the agent — just their phone number).
+## Docs
 
-```bash
-curl -s -X POST http://localhost:3000/api/session \
-  -H 'content-type: application/json' \
-  -d '{
-    "ttl": 86400000,
-    "prefill": {
-      "A": {
-        "fullName": "محمد عبدالله القحطاني",
-        "nationalId": "1023456789",
-        "mobile": "0551234567",
-        "licenceNo": "L8842190",
-        "licenceExpiry": "2027-03-01",
-        "plate": "أ ب ج 4821",
-        "makeModel": "تويوتا كامري",
-        "vehicleType": "private",
-        "registrationStatus": "valid",
-        "insuranceStatus": "valid",
-        "accidentType": "اصطدام خلفي",
-        "vehiclesInvolved": 2,
-        "otherPartyStatus": "present",
-        "injuries": false,
-        "_agentFilledFields": ["fullName","nationalId","mobile","licenceNo","plate","makeModel","vehicleType","insuranceStatus","accidentType","otherPartyStatus"]
-      },
-      "B": { "mobile": "0509876543", "_agentFilledFields": ["mobile"] }
-    }
-  }'
-```
-
-Response:
-
-```json
-{
-  "reportId": "NJM-26-4821",
-  "expiresAt": "...",
-  "partyA": { "url": "http://localhost:3000/r/<opaque-slug>" },
-  "partyB": { "url": "http://localhost:3000/r/<opaque-slug>" }
-}
-```
+- [docs/setup.md](docs/setup.md) — install, run, seed, reset, page index
+- [docs/hamsa.md](docs/hamsa.md) — webhook contract + configuring the Hamsa agent
+- [docs/ngrok.md](docs/ngrok.md) — expose the webhook for real Hamsa calls
+- [docs/twilio.md](docs/twilio.md) — simulated vs real SMS
+- [docs/demo-script.md](docs/demo-script.md) — end-to-end demo runbook
 
 ## API
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/api/session` | Voice agent mints report + two slugs → returns two short URLs. |
-| `GET`  | `/r/:slug` | Opaque slug → SSR form for that report+party with `prefill` injected. Expired/unknown → recovery page (never a raw 404). |
-| `POST` | `/api/report/:reportId/party/:party/submit` | Validates token↔report↔party, stores answers, computes edge-case flags, broadcasts over the socket. Body: `{ slug, answers }`. |
-| `GET`  | `/api/report/:reportId` | Status + flags + presence + audit trail (agent/dashboard). |
-
-## WebSocket contract (Socket.IO, room = `reportId`)
-
-**Client → server:** `join {reportId, party, slug}` (slug validated against report+party),
-`status {presence: 'filling'|'submitted'}`.
-**Server → client:** `presence {A, B}`, `party:submitted {party}`, `sync:complete {reportId}`,
-`party:timeout {party}`, `report:flags {flags, status}`.
-
-- On disconnect, a **60s grace timer** runs before broadcasting `absent` (survives dropped
-  mobile connections). Configurable via `NAJM_GRACE_MS`.
-- If Party B never joins within the **SLA (15 min, `NAJM_PARTY_B_SLA_MS`)**, the server emits
-  `party:timeout`, flags `PARTY_B_TIMEOUT`, and allows Party-A-only progression.
-
-## Edge-case flags → routing (brief §7)
-
-Flags are computed on submit (and shown live in the form's status strip). Routing precedence:
-
-- `INJURY` → **EMERGENCY** (997 + traffic police) — overrides all.
-- `HIT_AND_RUN` / `PARKED_HIT` / `UNINSURED` → **POLICE_REPORT**.
-- `REG_VIOLATION` / `LICENCE_INVALID` / `OWNER_MISMATCH` / `SPECIAL_VEHICLE` /
-  `MULTI_VEHICLE` / `PARTY_B_TIMEOUT` / `PARTY_B_UNVERIFIED` → **MANUAL_REVIEW**.
-- otherwise → **AUTOMATIC**.
-
-Other flags: `SINGLE_VEHICLE` (skip Party B), `LOC_MANUAL` (GPS fallback),
-`PHOTO_PENDING` (photos outstanding), `LINK_EXPIRED` (recovery page).
+| `POST` | `/api/webhook/hamsa` | Hamsa call events. `call.ended` mints report + causer link + SMS. Idempotent per `callId`. Bearer-authed. |
+| `POST` | `/api/session` | Manual mint (landing page / seed) — same result, `source:"manual"`. |
+| `GET` | `/r/:slug` | Opaque slug → SSR causer flow (pre-filled) or affected ack page. Expired/unknown → recovery page. |
+| `POST` | `/api/report/:id/submit` | Causer files (slug-authorized). Mints + SMSes ack links, computes flags/routing. |
+| `POST` | `/api/report/:id/analyze` | AI photo analysis (causer slug only; server-side Anthropic call). |
+| `POST` | `/api/ack/:ackSlug` | Affected party accepts/rejects the fault admission. |
+| `GET` | `/api/report/:id` | Full report status (dashboard). |
+| `GET` | `/api/feed?events=&sms=` | Cursor-polled live feed (the /phone page). |
+| `POST` | `/api/lookup` | Registry lookup dev stub — **wire the real registry before production.** |
 
 ## Privacy & audit
 
-- Slugs opaque; **no PII in URL/query string ever**.
-- `join` and `submit` both re-validate the slug/token matches the report+party.
-- Consent stored as a discrete, timestamped record per party (`consent` table).
-- Every meaningful step timestamped in an append-only `audit` table (insurance disputes).
-- Links are single-report-scoped with a TTL; expired links render a recovery page.
+- Slugs are opaque `nanoid` tokens — **no PII in any URL**; report data is SSR'd only
+  to the link holder.
+- The fault declaration and every accept/reject are discrete, timestamped audit rows
+  (append-only `audit` table).
+- The webhook stores the raw envelope in the feed for demo/debug — prune this for
+  production or scrub transcripts.
+
+## Stack
+
+Next.js 14 (App Router, TypeScript) · SQLite via `better-sqlite3` (dev; swap notes in
+`src/lib/db.ts`) · zod · shadcn/ui + Tailwind, dark Najm-green theme via CSS custom
+properties (`src/app/globals.css`) · Arabic-primary RTL, IBM Plex Sans Arabic.
 
 ## Project map
 
 ```
-server.ts                     custom Node server: Next + Socket.IO, join/status/disconnect
 src/lib/
-  config.ts                   TTLs, SLA, grace-timer knobs
-  db.ts                       SQLite schema + queries (swap notes for Redis/Postgres)
-  slug.ts                     opaque nanoid slug + report id
-  session.ts                  createSession(): mint report + two slugs
-  flags.ts                    computeFlags() + routeOutcome() + bilingual flag metadata
-  schema.ts                   zod: session + submit payloads
-  realtime.ts                 in-memory presence store, grace/SLA timers, io bridge
-  socketContract.ts           typed Socket.IO events
-  i18n.ts                     Arabic (primary, RTL) / English strings
+  hamsa.ts          webhook envelope parsing + tolerant outcomeResult mapping (synonym table)
+  sms.ts            simulated-first SMS; real Twilio REST when TWILIO_* set
+  session.ts        createSession(): mint report + causer link (+ intake)
+  db.ts             SQLite schema + queries (report/link/affected/audit/feed/sms)
+  flags.ts          routeOutcome() + bilingual flag metadata
+  photoAnalysis.ts  server-side Claude vision analysis (assistive, never authoritative)
+  etraffic.ts       property/registration config + registry lookup stub
+  schema.ts i18n.ts locale.ts slug.ts config.ts types.ts
 src/app/
-  page.tsx                    demo landing ("simulate the voice agent")
-  api/session/route.ts        POST /api/session
-  api/report/[reportId]/...   status + submit routes
-  r/[slug]/page.tsx           SSR slug resolver → form (or recovery page)
-  dashboard/[reportId]/...    live presence + flags (agent/demo view)
+  api/webhook/hamsa/route.ts   the Hamsa webhook
+  api/feed/route.ts            live feed for /phone
+  phone/                       live demo simulator (feed + phone frames)
+  r/[slug]/page.tsx            SSR slug resolver → causer flow | affected ack
+  dashboard/[reportId]/        per-report status view (polls 2s)
+  page.tsx                     manual demo landing (mints a causer link)
 src/components/
-  AccidentForm.tsx            the 8-section form, conditional logic, live flag strip
-  FlagStrip.tsx PresenceBar.tsx RecoveryPage.tsx useReportSocket.ts
-scripts/seed.ts               seed one demo report
+  CauserFlow.tsx               the filing flow (triage → details → accident → declaration)
+  AffectedAck.tsx AddAffectedDialog.tsx AddPropertyDialog.tsx LocationStep.tsx
+scripts/
+  seed.ts                      mint one manual demo report
+  simulate-call.ts             fire a full fake Hamsa call at the webhook
 ```

@@ -19,7 +19,7 @@ console.log("Seeded report:", result.reportId);
 console.log("  Causer link:", result.causer.url);
 console.log("  Dashboard: /dashboard/" + result.reportId);
 console.log(
-  "\nAdd an affected party in the form via lookup — seeded records:\n" +
-    "  vehicle 4821 + id 2098765432, or vehicle 7391 + id 1122334455"
+  "\nManual mint (source:manual) — the role chooser stays visible on this link." +
+    "\nFor the webhook-driven flow use: npm run simulate:call"
 );
 console.log("\nNote: start the server (npm run dev) before opening these links.");
