@@ -5,16 +5,14 @@ import type {
   AffectedRow,
   LinkRow,
   Party,
-  PartyLocation,
-  Phase,
   ReportRow,
   ReportStatus,
 } from "./types";
 
 // ---------------------------------------------------------------------------
 // Local dev persistence. For prod, swap:
-//   - report + link  -> Postgres (durable, transactional)
-//   - party_session / presence -> Redis (fast, pub/sub across server instances)
+//   - report + link + affected -> Postgres (durable, transactional)
+//   - feed_event / sms_message -> Postgres or a queue-backed store
 // The interface below is intentionally narrow so those swaps are localized.
 // ---------------------------------------------------------------------------
 
@@ -28,11 +26,13 @@ const g = globalThis as unknown as { __najmDb?: Database.Database };
 export const db: Database.Database = g.__najmDb ?? new Database(dbPath);
 g.__najmDb = db;
 
+// Retry (rather than throw SQLITE_BUSY) when another connection holds the write
+// lock briefly — matters when several processes open the dev DB file at once
+// (e.g. next build page-data workers). Must be set BEFORE journal_mode, which
+// itself needs a write lock.
+db.pragma("busy_timeout = 5000");
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
-// Retry (rather than throw SQLITE_BUSY) when another connection holds the write
-// lock briefly — matters if more than one process opens the dev DB file.
-db.pragma("busy_timeout = 5000");
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS report (
@@ -52,37 +52,6 @@ db.exec(`
     expiresAt  TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_link_report ON link(reportId);
-
-  -- Answers each party submitted (audit trail; one row per party per report).
-  CREATE TABLE IF NOT EXISTS submission (
-    reportId    TEXT NOT NULL REFERENCES report(reportId),
-    party       TEXT NOT NULL,
-    answers     TEXT NOT NULL,
-    flags       TEXT NOT NULL DEFAULT '[]',
-    submittedAt TEXT NOT NULL,
-    PRIMARY KEY (reportId, party)
-  );
-
-  -- Discrete, timestamped consent record per party (brief §9).
-  CREATE TABLE IF NOT EXISTS consent (
-    reportId  TEXT NOT NULL REFERENCES report(reportId),
-    party     TEXT NOT NULL,
-    grantedAt TEXT NOT NULL,
-    PRIMARY KEY (reportId, party)
-  );
-
-  -- Location each party shared (pre-submit, live). One row per party.
-  CREATE TABLE IF NOT EXISTS party_location (
-    reportId  TEXT NOT NULL REFERENCES report(reportId),
-    party     TEXT NOT NULL,
-    lat       REAL,
-    lng       REAL,
-    accuracy  REAL,
-    label     TEXT,
-    source    TEXT NOT NULL,
-    at        TEXT NOT NULL,
-    PRIMARY KEY (reportId, party)
-  );
 
   -- Append-only audit log: every meaningful step, timestamped.
   CREATE TABLE IF NOT EXISTS audit (
@@ -110,19 +79,42 @@ db.exec(`
     PRIMARY KEY (reportId, idx)
   );
   CREATE INDEX IF NOT EXISTS idx_affected_report ON affected(reportId);
+
+  -- Live demo feed: every incoming webhook + every action the server took.
+  -- Append-only; the /phone simulator polls this with an id cursor.
+  CREATE TABLE IF NOT EXISTS feed_event (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind       TEXT NOT NULL,             -- 'webhook' | 'action'
+    callId     TEXT,                      -- Hamsa callId (webhook rows)
+    eventType  TEXT,                      -- call.started|call.ended|...|link_minted|report_filed
+    reportId   TEXT,
+    summary    TEXT NOT NULL,             -- human one-liner for the feed panel
+    payload    TEXT NOT NULL DEFAULT '{}',-- raw webhook JSON / action detail
+    at         TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_feed_call ON feed_event(callId);
+
+  -- SMS outbox (real Twilio send or simulated). The /phone page groups these
+  -- into phone frames by toNumber.
+  CREATE TABLE IF NOT EXISTS sms_message (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    reportId    TEXT,
+    toParty     TEXT NOT NULL,            -- 'causer' | 'affected'
+    toNumber    TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    linkUrl     TEXT,
+    provider    TEXT NOT NULL,            -- 'simulated' | 'twilio'
+    providerSid TEXT,
+    status      TEXT NOT NULL,            -- 'simulated' | 'queued' | 'sent' | 'failed'
+    error       TEXT,
+    at          TEXT NOT NULL
+  );
 `);
 
 // --- lightweight migrations (add columns to pre-existing DBs) --------------
-// Single-device handover state lives on the report: `phase` drives the zone
-// edit-locks (partyA -> handover -> partyB -> complete); `verifyAttempts`
-// tracks Party-B identity retries.
 {
   const cols = db.prepare(`PRAGMA table_info(report)`).all() as { name: string }[];
   const has = (n: string) => cols.some((c) => c.name === n);
-  if (!has("phase"))
-    db.exec(`ALTER TABLE report ADD COLUMN phase TEXT NOT NULL DEFAULT 'partyA'`);
-  if (!has("verifyAttempts"))
-    db.exec(`ALTER TABLE report ADD COLUMN verifyAttempts INTEGER NOT NULL DEFAULT 0`);
   // eTraffic model: the causer fills everything; content lives as JSON on the row.
   if (!has("causer"))
     db.exec(`ALTER TABLE report ADD COLUMN causer TEXT NOT NULL DEFAULT '{}'`);
@@ -133,6 +125,10 @@ db.exec(`
   // AI photo-analysis result (assistive; stored in the audit trail on the row).
   if (!has("photoAnalysis"))
     db.exec(`ALTER TABLE report ADD COLUMN photoAnalysis TEXT NOT NULL DEFAULT ''`);
+  // How the report was minted (hamsa webhook vs manual/seed) + call-captured
+  // extras beyond the causer's identity (injuries, other party's mobile, hints).
+  if (!has("intake"))
+    db.exec(`ALTER TABLE report ADD COLUMN intake TEXT NOT NULL DEFAULT '{}'`);
 }
 
 // --- report ---------------------------------------------------------------
@@ -158,6 +154,13 @@ export function setReportStatus(reportId: string, status: ReportStatus): void {
   db.prepare(`UPDATE report SET status = ? WHERE reportId = ?`).run(status, reportId);
 }
 
+export function setReportFlags(reportId: string, flags: string[]): void {
+  db.prepare(`UPDATE report SET flags = ? WHERE reportId = ?`).run(
+    JSON.stringify(flags),
+    reportId
+  );
+}
+
 // --- eTraffic report content (causer fills everything) --------------------
 
 export function setCauser(reportId: string, causer: object): void {
@@ -181,6 +184,12 @@ export function setProperties(reportId: string, properties: object[]): void {
 export function setPhotoAnalysis(reportId: string, analysis: object): void {
   db.prepare(`UPDATE report SET photoAnalysis = ? WHERE reportId = ?`).run(
     JSON.stringify(analysis),
+    reportId
+  );
+}
+export function setIntake(reportId: string, intake: object): void {
+  db.prepare(`UPDATE report SET intake = ? WHERE reportId = ?`).run(
+    JSON.stringify(intake),
     reportId
   );
 }
@@ -234,29 +243,7 @@ export function setAck(
   );
 }
 
-export function setPhase(reportId: string, phase: Phase): void {
-  db.prepare(`UPDATE report SET phase = ? WHERE reportId = ?`).run(phase, reportId);
-}
-
-// Increments and returns the new Party-B verification attempt count.
-export function incVerifyAttempts(reportId: string): number {
-  db.prepare(
-    `UPDATE report SET verifyAttempts = verifyAttempts + 1 WHERE reportId = ?`
-  ).run(reportId);
-  const r = db
-    .prepare(`SELECT verifyAttempts FROM report WHERE reportId = ?`)
-    .get(reportId) as { verifyAttempts: number };
-  return r.verifyAttempts;
-}
-
-export function setReportFlags(reportId: string, flags: string[]): void {
-  db.prepare(`UPDATE report SET flags = ? WHERE reportId = ?`).run(
-    JSON.stringify(flags),
-    reportId
-  );
-}
-
-// --- link (slug -> predefined values) -------------------------------------
+// --- link (slug -> report + party) ------------------------------------------
 
 export function insertLink(l: LinkRow): void {
   db.prepare(
@@ -284,81 +271,115 @@ export function markLinkUsed(slug: string, at: string): void {
   );
 }
 
-// --- submission -----------------------------------------------------------
+// --- feed (live webhook/action stream for the /phone simulator) ------------
 
-export function upsertSubmission(s: {
-  reportId: string;
-  party: Party;
-  answers: object;
-  flags: string[];
-  submittedAt: string;
-}): void {
-  db.prepare(
-    `INSERT INTO submission (reportId, party, answers, flags, submittedAt)
-     VALUES (@reportId, @party, @answers, @flags, @submittedAt)
-     ON CONFLICT(reportId, party) DO UPDATE SET
-       answers = excluded.answers,
-       flags = excluded.flags,
-       submittedAt = excluded.submittedAt`
-  ).run({
-    reportId: s.reportId,
-    party: s.party,
-    answers: JSON.stringify(s.answers),
-    flags: JSON.stringify(s.flags),
-    submittedAt: s.submittedAt,
-  });
-}
-
-export function getSubmissions(
-  reportId: string
-): { party: Party; flags: string[]; submittedAt: string }[] {
-  const rows = db
-    .prepare(`SELECT party, flags, submittedAt FROM submission WHERE reportId = ?`)
-    .all(reportId) as { party: Party; flags: string; submittedAt: string }[];
-  return rows.map((r) => ({
-    party: r.party,
-    flags: JSON.parse(r.flags) as string[],
-    submittedAt: r.submittedAt,
-  }));
-}
-
-// --- party_location -------------------------------------------------------
-
-export function upsertLocation(l: {
-  reportId: string;
-  party: Party;
-  lat: number | null;
-  lng: number | null;
-  accuracy: number | null;
-  label: string | null;
-  source: "gps" | "manual";
+export interface FeedEventRow {
+  id: number;
+  kind: "webhook" | "action";
+  callId: string | null;
+  eventType: string | null;
+  reportId: string | null;
+  summary: string;
+  payload: string; // JSON
   at: string;
-}): void {
-  db.prepare(
-    `INSERT INTO party_location (reportId, party, lat, lng, accuracy, label, source, at)
-     VALUES (@reportId, @party, @lat, @lng, @accuracy, @label, @source, @at)
-     ON CONFLICT(reportId, party) DO UPDATE SET
-       lat = excluded.lat, lng = excluded.lng, accuracy = excluded.accuracy,
-       label = excluded.label, source = excluded.source, at = excluded.at`
-  ).run(l);
 }
 
-export function getLocations(reportId: string): PartyLocation[] {
+export function insertFeedEvent(e: {
+  kind: "webhook" | "action";
+  callId?: string;
+  eventType?: string;
+  reportId?: string;
+  summary: string;
+  payload?: object;
+  at: string;
+}): number {
+  const res = db
+    .prepare(
+      `INSERT INTO feed_event (kind, callId, eventType, reportId, summary, payload, at)
+       VALUES (@kind, @callId, @eventType, @reportId, @summary, @payload, @at)`
+    )
+    .run({
+      kind: e.kind,
+      callId: e.callId ?? null,
+      eventType: e.eventType ?? null,
+      reportId: e.reportId ?? null,
+      summary: e.summary,
+      payload: JSON.stringify(e.payload ?? {}),
+      at: e.at,
+    });
+  return Number(res.lastInsertRowid);
+}
+
+export function getFeedSince(sinceId: number): FeedEventRow[] {
+  return db
+    .prepare(`SELECT * FROM feed_event WHERE id > ? ORDER BY id`)
+    .all(sinceId) as FeedEventRow[];
+}
+
+// Idempotency: has this Hamsa call already minted a report? Returns the
+// earlier action row (its reportId) if so.
+export function findMintedByCallId(callId: string): FeedEventRow | undefined {
   return db
     .prepare(
-      `SELECT party, lat, lng, accuracy, label, source, at
-       FROM party_location WHERE reportId = ?`
+      `SELECT * FROM feed_event
+       WHERE callId = ? AND kind = 'action' AND eventType = 'link_minted'
+       ORDER BY id LIMIT 1`
     )
-    .all(reportId) as PartyLocation[];
+    .get(callId) as FeedEventRow | undefined;
 }
 
-// --- consent --------------------------------------------------------------
+// --- sms outbox -------------------------------------------------------------
 
-export function recordConsent(reportId: string, party: Party, at: string): void {
-  db.prepare(
-    `INSERT INTO consent (reportId, party, grantedAt) VALUES (?, ?, ?)
-     ON CONFLICT(reportId, party) DO NOTHING`
-  ).run(reportId, party, at);
+export interface SmsRow {
+  id: number;
+  reportId: string | null;
+  toParty: "causer" | "affected";
+  toNumber: string;
+  body: string;
+  linkUrl: string | null;
+  provider: "simulated" | "twilio";
+  providerSid: string | null;
+  status: "simulated" | "queued" | "sent" | "failed";
+  error: string | null;
+  at: string;
+}
+
+export function insertSms(s: {
+  reportId?: string;
+  toParty: "causer" | "affected";
+  toNumber: string;
+  body: string;
+  linkUrl?: string;
+  provider: "simulated" | "twilio";
+  providerSid?: string;
+  status: "simulated" | "queued" | "sent" | "failed";
+  error?: string;
+  at: string;
+}): number {
+  const res = db
+    .prepare(
+      `INSERT INTO sms_message (reportId, toParty, toNumber, body, linkUrl, provider, providerSid, status, error, at)
+       VALUES (@reportId, @toParty, @toNumber, @body, @linkUrl, @provider, @providerSid, @status, @error, @at)`
+    )
+    .run({
+      reportId: s.reportId ?? null,
+      toParty: s.toParty,
+      toNumber: s.toNumber,
+      body: s.body,
+      linkUrl: s.linkUrl ?? null,
+      provider: s.provider,
+      providerSid: s.providerSid ?? null,
+      status: s.status,
+      error: s.error ?? null,
+      at: s.at,
+    });
+  return Number(res.lastInsertRowid);
+}
+
+export function getSmsSince(sinceId: number): SmsRow[] {
+  return db
+    .prepare(`SELECT * FROM sms_message WHERE id > ? ORDER BY id`)
+    .all(sinceId) as SmsRow[];
 }
 
 // --- audit ----------------------------------------------------------------

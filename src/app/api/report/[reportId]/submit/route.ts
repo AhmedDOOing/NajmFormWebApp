@@ -15,7 +15,6 @@ import {
 } from "@/lib/db";
 import { mergeFlags, routeOutcome } from "@/lib/flags";
 import { deriveAiFlags } from "@/lib/photoAnalysis";
-import { broadcastFlags } from "@/lib/realtime";
 import { newSlug } from "@/lib/slug";
 import { HOST_BASE_URL } from "@/lib/config";
 import type { CauserData, Flag, PhotoAnalysis } from "@/lib/types";
@@ -121,7 +120,6 @@ export async function POST(
     detail: `affected:${body.affected.length} properties:${body.properties.length}`,
   });
   audit(params.reportId, "fault_declaration_signed", at, { party: "A" });
-  broadcastFlags(params.reportId, merged, status);
 
   return NextResponse.json({
     ok: true,

@@ -10,7 +10,6 @@ import {
   getReport,
 } from "@/lib/db";
 import { mergeFlags, routeOutcome } from "@/lib/flags";
-import { broadcastFlags } from "@/lib/realtime";
 
 export const dynamic = "force-dynamic";
 
@@ -53,7 +52,6 @@ export async function POST(
   else if (allAccepted) status = "complete";
   else status = "filed";
   setReportStatus(row.reportId, status as never);
-  broadcastFlags(row.reportId, flags, status);
 
   return NextResponse.json({ ok: true, decision, status, routing });
 }

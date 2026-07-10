@@ -409,10 +409,10 @@ export default function CauserFlow({
                   <div className="text-4xl">🚑</div>
                   <p className="text-sm text-muted-foreground">{t.injuryBlockBody}</p>
                   <a
-                    href="tel:911"
+                    href="tel:997"
                     className="inline-flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-destructive text-lg font-bold text-white"
                   >
-                    📞 {t.call911}
+                    📞 {t.call997}
                   </a>
                 </CardContent>
               </Card>
@@ -736,7 +736,7 @@ export default function CauserFlow({
             {step === "home" && (
               <Button
                 size="lg"
-                disabled={affected.length === 0}
+                disabled={affected.length === 0 && properties.length === 0}
                 className="cta-premium h-14 flex-1 rounded-2xl text-base font-bold"
                 onClick={() => setStep("accident")}
               >

@@ -4,38 +4,18 @@ export type Locale = "ar" | "en";
 
 export type ReportStatus =
   | "open"
-  | "partyA_done"
-  | "partyB_done"
   | "filed" // causer submitted; awaiting affected acknowledgment
   | "complete"
   | "escalated"
   | "disputed"
   | "expired";
 
-// Single-device handover phase — drives zone edit-locks (server-enforced).
-export type Phase = "partyA" | "handover" | "partyB" | "complete";
-
-export type Presence = "connected" | "filling" | "submitted" | "absent";
-
-// Edge-case flags — see build brief §7. Each maps to a routing outcome.
+// Edge-case flags (eTraffic model). Each maps to a routing outcome.
 export type Flag =
   | "INJURY"
-  | "HIT_AND_RUN"
-  | "PARKED_HIT"
-  | "UNINSURED"
-  | "REG_VIOLATION"
-  | "LICENCE_INVALID"
-  | "OWNER_MISMATCH"
-  | "SPECIAL_VEHICLE"
-  | "MULTI_VEHICLE"
-  | "SINGLE_VEHICLE"
-  | "PARTY_B_TIMEOUT"
-  | "PARTY_B_UNVERIFIED"
   | "LINK_EXPIRED"
   | "LOC_MANUAL"
   | "PHOTO_PENDING"
-  | "SHARED_DISPUTE"
-  | "PARTY_ABSENT"
   | "FAULT_DISPUTED"
   | "AFFECTED_TIMEOUT"
   | "AFFECTED_LOOKUP_FAILED"
@@ -57,12 +37,11 @@ export interface ReportRow {
   createdAt: string;
   expiresAt: string;
   flags: string; // JSON string[] in the DB
-  phase: Phase;
-  verifyAttempts: number;
   causer: string; // JSON CauserData
   accident: string; // JSON AccidentData
   properties: string; // JSON PropertyItem[]
   photoAnalysis: string; // JSON PhotoAnalysis | '' (empty = not run)
+  intake: string; // JSON IntakeData — how the report was minted (hamsa|manual)
 }
 
 export interface LinkRow {
@@ -72,57 +51,6 @@ export interface LinkRow {
   prefill: string; // JSON in the DB
   usedAt: string | null;
   expiresAt: string;
-}
-
-// The predefined field values the voice agent captured, keyed by section.
-// Everything here is optional — Party B's prefill is intentionally minimal.
-export interface Prefill {
-  // location
-  city?: string;
-  district?: string;
-  landmark?: string;
-  lat?: number;
-  lng?: number;
-  accuracy?: number; // metres, from the Geolocation API
-  locationLabel?: string; // resolved place name / chosen nearby place
-  locationSource?: "gps" | "manual";
-  // your details
-  fullName?: string;
-  nationalId?: string;
-  nationality?: string;
-  mobile?: string;
-  licenceNo?: string;
-  licenceExpiry?: string; // ISO date
-  notOwner?: boolean;
-  ownerName?: string;
-  ownerAuthorization?: string;
-  // vehicle
-  plate?: string;
-  makeModel?: string;
-  year?: string;
-  colour?: string;
-  vehicleType?: VehicleType;
-  registrationStatus?: "valid" | "expired";
-  // insurance
-  insuranceStatus?: InsuranceStatus;
-  insurer?: string;
-  policyNo?: string;
-  coverageType?: string;
-  // accident
-  accidentDate?: string;
-  accidentType?: string;
-  vehiclesInvolved?: number;
-  description?: string;
-  damageLocation?: string;
-  damageSeverity?: "minor" | "moderate" | "severe";
-  injuries?: boolean;
-  // other party
-  otherPartyStatus?: OtherPartyStatus;
-  otherPartyMobile?: string;
-  // fields the agent may pre-fill; consent + own statement are NEVER pre-filled
-  _agentFilledFields?: string[];
-  // optional language hint from the voice call — pre-highlights the gate option
-  _langHint?: Locale;
 }
 
 // ===========================================================================
@@ -146,6 +74,23 @@ export interface CauserData {
   vehicle: VehicleInfo;
   driver: DriverInfo;
   faultDeclaration?: { accepted: true; at: string };
+}
+
+// How the report was minted + what the voice call captured beyond the causer's
+// identity. Webhook-minted reports carry source:"hamsa" and skip the manual
+// role-chooser; seed/demo reports carry source:"manual" and keep it.
+export interface IntakeData {
+  source: "hamsa" | "manual";
+  callId?: string;
+  injuries?: boolean;
+  otherPartyMobile?: string;
+  accidentHints?: {
+    governorate?: string;
+    area?: string;
+    locationText?: string;
+    dateTime?: string;
+    accidentType?: string;
+  };
 }
 
 export type AckStatus = "pending" | "accepted" | "rejected";
@@ -189,29 +134,6 @@ export interface AccidentData {
   photosPending?: boolean;
   injuries?: boolean;
 }
-
-// A location shared by a party before/at submit (lives on the report, live over
-// the socket, shown on the dashboard).
-export interface PartyLocation {
-  party: Party;
-  lat: number | null;
-  lng: number | null;
-  accuracy: number | null;
-  label: string | null;
-  source: "gps" | "manual";
-  at: string;
-}
-
-export type VehicleType =
-  | "private"
-  | "commercial"
-  | "rental"
-  | "government"
-  | "motorcycle";
-
-export type InsuranceStatus = "valid" | "expired" | "none" | "unknown";
-
-export type OtherPartyStatus = "present" | "fled" | "parked" | "none";
 
 // ===========================================================================
 // AI photo analysis — ASSISTIVE, human-reviewed. Never authoritative.
@@ -260,15 +182,4 @@ export interface PhotoAnalysis {
   imageCount: number;
   result?: PhotoAnalysisResult; // present when status === "complete"
   error?: string; // present when status === "failed"
-}
-
-// What a party actually submits (superset of Prefill + consent + statement).
-export interface SubmitPayload extends Prefill {
-  statement?: string; // driver's own words — never agent-filled
-  consent: boolean; // must be affirmed by the driver
-  locationManual?: boolean; // GPS failed, entered by hand -> LOC_MANUAL
-  photosPending?: boolean; // couldn't upload now -> PHOTO_PENDING
-  photoCount?: number;
-  identityVerified?: boolean;
-  sharedDispute?: boolean; // Party B disputes A's account -> SHARED_DISPUTE
 }
