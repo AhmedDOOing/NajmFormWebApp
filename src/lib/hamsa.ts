@@ -1,0 +1,192 @@
+import { z } from "zod";
+import type { DriverInfo, IntakeData, VehicleInfo } from "./types";
+
+// ---------------------------------------------------------------------------
+// Hamsa webhook envelope + outcome mapping.
+//
+// Hamsa POSTs call-lifecycle events (docs.tryhamsa.com → Webhooks):
+//   { eventType, callId, timestamp, projectId?, agentId?, agentName?,
+//     data: { data: { conversationId, conversationRecording,
+//                     transcription: [{Agent|User: string}],
+//                     outcomeResult: { ...agent-extracted fields... } } } }
+//
+// Only `call.ended` carries `outcomeResult` — the structured fields the voice
+// agent extracted from the call. We control what the agent extracts, but key
+// names drift between agent configs, so mapping is tolerant: keys are
+// normalized (lowercased, separators stripped) and matched against the synonym
+// table below. Unknown keys are ignored, never fatal.
+// ---------------------------------------------------------------------------
+
+export const HAMSA_EVENT_TYPES = [
+  "call.started",
+  "call.answered",
+  "transcription.update",
+  "tool.executed",
+  "call.ended",
+] as const;
+export type HamsaEventType = (typeof HAMSA_EVENT_TYPES)[number];
+
+// Lenient on purpose: Hamsa's envelope may grow fields; we never reject a
+// webhook on shape drift — worst case it lands in the feed as "unrecognized".
+export const hamsaEnvelopeSchema = z
+  .object({
+    eventType: z.string(),
+    callId: z.string().optional(),
+    timestamp: z.string().optional(),
+    projectId: z.string().optional(),
+    agentId: z.string().optional(),
+    agentName: z.string().optional(),
+    data: z.unknown().optional(),
+  })
+  .passthrough();
+export type HamsaEnvelope = z.infer<typeof hamsaEnvelopeSchema>;
+
+// The synonym table — the contract with the Hamsa agent config. The agent's
+// outcome fields must use ANY of these names (case/underscore/dash-insensitive).
+// Documented in docs/hamsa.md; keep the two in sync.
+export const OUTCOME_SYNONYMS = {
+  // causer vehicle
+  "vehicle.nationality": ["vehiclenationality", "carnationality", "vehiclecountry"],
+  "vehicle.number": ["vehiclenumber", "plate", "platenumber", "plateno", "vehicleplate", "carplate"],
+  "vehicle.registrationType": ["registrationtype", "vehicleregistrationtype", "vehicletype"],
+  // causer driver
+  "driver.identityType": ["identitytype", "idtype"],
+  "driver.identityNumber": ["identitynumber", "nationalid", "idnumber", "iqama", "iqamanumber", "personalnumber"],
+  "driver.fullName": ["fullname", "causername", "drivername", "name", "callername"],
+  "driver.mobile": ["mobile", "causermobile", "drivermobile", "phone", "phonenumber", "callerphone", "mobilenumber"],
+  "driver.email": ["email", "causeremail", "driveremail"],
+  // intake extras
+  "intake.injuries": ["injuries", "anyinjuries", "hasinjuries", "injured"],
+  "intake.otherPartyMobile": ["otherpartymobile", "affectedmobile", "otherphone", "otherpartyphone", "otherdrivermobile", "affectedphone"],
+  "intake.accidentHints.governorate": ["governorate", "region", "accidentregion"],
+  "intake.accidentHints.area": ["area", "city", "accidentcity", "accidentarea"],
+  "intake.accidentHints.locationText": ["location", "locationtext", "accidentlocation", "street", "landmark"],
+  "intake.accidentHints.dateTime": ["datetime", "accidentdatetime", "accidentdate", "accidenttime", "incidentdate"],
+  "intake.accidentHints.accidentType": ["accidenttype", "incidenttype", "collisiontype"],
+} as const;
+
+export interface MappedOutcome {
+  causer: { vehicle: Partial<VehicleInfo>; driver: Partial<DriverInfo> };
+  intake: IntakeData;
+  /** outcome keys we didn't recognize — surfaced in the feed for debugging */
+  ignoredKeys: string[];
+}
+
+const normalizeKey = (k: string) => k.toLowerCase().replace(/[\s_-]+/g, "");
+
+function coerceBool(v: unknown): boolean | undefined {
+  if (typeof v === "boolean") return v;
+  if (typeof v === "number") return v !== 0;
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase();
+    if (["yes", "true", "y", "1", "نعم", "اي", "أجل"].includes(s)) return true;
+    if (["no", "false", "n", "0", "لا", "كلا"].includes(s)) return false;
+  }
+  return undefined;
+}
+
+const str = (v: unknown): string | undefined =>
+  typeof v === "string" && v.trim() ? v.trim() : typeof v === "number" ? String(v) : undefined;
+
+// Map a raw outcomeResult bag onto causer prefill + intake, tolerantly.
+export function mapOutcome(
+  outcome: Record<string, unknown>,
+  callId?: string
+): MappedOutcome {
+  // normalized key -> canonical target path
+  const lookup = new Map<string, string>();
+  for (const [target, aliases] of Object.entries(OUTCOME_SYNONYMS)) {
+    for (const a of aliases) lookup.set(a, target);
+    lookup.set(normalizeKey(target.split(".").pop()!), target); // exact field name too
+  }
+
+  const vehicle: Partial<VehicleInfo> = {};
+  const driver: Partial<DriverInfo> = {};
+  const hints: NonNullable<IntakeData["accidentHints"]> = {};
+  const intake: IntakeData = { source: "hamsa", callId };
+  const ignoredKeys: string[] = [];
+
+  for (const [rawKey, rawVal] of Object.entries(outcome)) {
+    const target = lookup.get(normalizeKey(rawKey));
+    if (!target) {
+      ignoredKeys.push(rawKey);
+      continue;
+    }
+    switch (target) {
+      case "vehicle.nationality": vehicle.nationality = str(rawVal) ?? vehicle.nationality; break;
+      case "vehicle.number": vehicle.number = str(rawVal) ?? vehicle.number; break;
+      case "vehicle.registrationType": vehicle.registrationType = str(rawVal)?.toUpperCase() ?? vehicle.registrationType; break;
+      case "driver.identityType": driver.identityType = str(rawVal) ?? driver.identityType; break;
+      case "driver.identityNumber": driver.identityNumber = str(rawVal) ?? driver.identityNumber; break;
+      case "driver.fullName": driver.fullName = str(rawVal) ?? driver.fullName; break;
+      case "driver.mobile": driver.mobile = str(rawVal) ?? driver.mobile; break;
+      case "driver.email": driver.email = str(rawVal) ?? driver.email; break;
+      case "intake.injuries": intake.injuries = coerceBool(rawVal) ?? intake.injuries; break;
+      case "intake.otherPartyMobile": intake.otherPartyMobile = str(rawVal) ?? intake.otherPartyMobile; break;
+      case "intake.accidentHints.governorate": hints.governorate = str(rawVal) ?? hints.governorate; break;
+      case "intake.accidentHints.area": hints.area = str(rawVal) ?? hints.area; break;
+      case "intake.accidentHints.locationText": hints.locationText = str(rawVal) ?? hints.locationText; break;
+      case "intake.accidentHints.dateTime": hints.dateTime = str(rawVal) ?? hints.dateTime; break;
+      case "intake.accidentHints.accidentType": hints.accidentType = str(rawVal) ?? hints.accidentType; break;
+    }
+  }
+
+  if (Object.keys(hints).length > 0) intake.accidentHints = hints;
+  return { causer: { vehicle, driver }, intake, ignoredKeys };
+}
+
+// Hamsa nests the useful bits under data.data (observed in their docs). Be
+// tolerant: accept data.data, data, or top-level placement.
+export function extractCallData(envelope: HamsaEnvelope): {
+  conversationId?: string;
+  transcription?: Array<Record<string, string>>;
+  outcomeResult?: Record<string, unknown>;
+} {
+  const candidates: unknown[] = [];
+  const d = envelope.data as Record<string, unknown> | undefined;
+  if (d && typeof d === "object") {
+    if (d.data && typeof d.data === "object") candidates.push(d.data);
+    candidates.push(d);
+  }
+  candidates.push(envelope);
+
+  for (const c of candidates) {
+    const o = c as Record<string, unknown>;
+    if (o.outcomeResult || o.transcription || o.conversationId) {
+      return {
+        conversationId: str(o.conversationId),
+        transcription: Array.isArray(o.transcription)
+          ? (o.transcription as Array<Record<string, string>>)
+          : undefined,
+        outcomeResult:
+          o.outcomeResult && typeof o.outcomeResult === "object"
+            ? (o.outcomeResult as Record<string, unknown>)
+            : undefined,
+      };
+    }
+  }
+  return {};
+}
+
+// One human-readable line per event for the live feed panel.
+export function summarizeEvent(envelope: HamsaEnvelope): string {
+  const call = envelope.callId ? ` · ${envelope.callId}` : "";
+  switch (envelope.eventType) {
+    case "call.started":
+      return `Call started${call}`;
+    case "call.answered":
+      return `Call answered${call}`;
+    case "transcription.update": {
+      const { transcription } = extractCallData(envelope);
+      const last = transcription?.[transcription.length - 1];
+      const [speaker, text] = last ? Object.entries(last)[0] ?? [] : [];
+      return text ? `${speaker}: "${String(text).slice(0, 80)}"` : `Transcription update${call}`;
+    }
+    case "tool.executed":
+      return `Agent tool executed${call}`;
+    case "call.ended":
+      return `Call ended${call} — outcome received`;
+    default:
+      return `Unrecognized event "${envelope.eventType}"${call}`;
+  }
+}

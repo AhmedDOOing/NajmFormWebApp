@@ -1,13 +1,23 @@
 import { DEFAULT_LINK_TTL_MS, HOST_BASE_URL } from "./config";
-import { audit, getReport, insertLink, insertReport, setCauser } from "./db";
+import {
+  audit,
+  getReport,
+  insertLink,
+  insertReport,
+  setCauser,
+  setIntake,
+} from "./db";
 import { newReportId, newSlug } from "./slug";
-import type { DriverInfo, VehicleInfo } from "./types";
+import type { DriverInfo, IntakeData, VehicleInfo } from "./types";
 
 export interface CreateSessionInput {
   reportId?: string;
   ttl?: number; // ms
   // The causer's registered details (from the voice agent / their identity).
   causer?: { vehicle?: Partial<VehicleInfo>; driver?: Partial<DriverInfo> };
+  // How this report was minted + call-captured extras. Defaults to manual
+  // (seed / demo landing) — the Hamsa webhook passes source:"hamsa".
+  intake?: IntakeData;
 }
 
 export interface CreateSessionResult {
@@ -34,7 +44,10 @@ export function createSession(input: CreateSessionInput): CreateSessionResult {
     vehicle: input.causer?.vehicle ?? {},
     driver: input.causer?.driver ?? {},
   });
-  audit(reportId, "session_created", createdAt);
+  setIntake(reportId, input.intake ?? { source: "manual" });
+  audit(reportId, "session_created", createdAt, {
+    detail: `source:${input.intake?.source ?? "manual"}`,
+  });
 
   const slug = newSlug();
   insertLink({
