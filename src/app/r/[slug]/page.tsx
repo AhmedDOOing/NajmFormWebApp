@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { getLink, getReport } from "@/lib/db";
-import type { AccidentData, PartyData } from "@/lib/types";
+import type { AccidentData, IntakeData, PartyData } from "@/lib/types";
 import { langCookieName, parseLocale } from "@/lib/locale";
 import PartyFlow from "@/components/PartyFlow";
 import RecoveryPage from "@/components/RecoveryPage";
@@ -28,6 +28,8 @@ export default function ShortLinkPage({ params }: { params: { slug: string } }) 
   const accident = JSON.parse(report.accident || "{}") as AccidentData;
   const self = party === "A" ? partyA : partyB;
   const other = party === "A" ? partyB : partyA;
+  const intakeRaw = JSON.parse(report.intake || "{}") as Partial<IntakeData>;
+  const intake: IntakeData = { source: intakeRaw.source ?? "manual", ...intakeRaw };
   const saved = parseLocale(cookies().get(langCookieName(report.reportId, party))?.value);
 
   return (
@@ -38,6 +40,7 @@ export default function ShortLinkPage({ params }: { params: { slug: string } }) 
       self={self}
       otherParty={other}
       accident={accident}
+      intake={intake}
       initialLang={saved}
     />
   );

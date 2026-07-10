@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import type { AccidentData, Locale, PartyData, PhotoAnalysis } from "@/lib/types";
+import type { AccidentData, IntakeData, Locale, PartyData, PhotoAnalysis } from "@/lib/types";
 import { dict, type Lang, type Dict } from "@/lib/i18n";
 import { setLangCookie } from "@/lib/locale";
 import {
@@ -240,6 +240,7 @@ export default function PartyFlow({
   self,
   otherParty,
   accident,
+  intake,
   initialLang,
 }: {
   reportId: string;
@@ -248,6 +249,7 @@ export default function PartyFlow({
   self: PartyData;
   otherParty?: PartyData;
   accident?: AccidentData;
+  intake: IntakeData;
   initialLang: Locale | null;
 }) {
   const [locale, setLocale] = useState<Locale | null>(initialLang);
@@ -268,11 +270,15 @@ export default function PartyFlow({
   const filled = vNat && vNum && vReg && dIdType && dId && dName && dMobile && dEmail;
 
   // accident (Party A only)
-  const [date, setDate] = useState("");
-  const [time, setTime] = useState("");
+  // Accident date/time pre-split from the call-captured hint if any.
+  const hintDateTime = intake.accidentHints?.dateTime ?? "";
+  const [date, setDate] = useState(hintDateTime.slice(0, 10));
+  const [time, setTime] = useState(/T\d{2}:\d{2}/.test(hintDateTime) ? hintDateTime.slice(11, 16) : "");
   const [photoCount, setPhotoCount] = useState(0);
   const [photos, setPhotos] = useState<PhotoData[]>([]);
-  const [injuries, setInjuries] = useState<boolean | null>(null);
+  // Injury triage stays on screen even when the call captured it — the driver
+  // confirms; it's pre-selected, never silently skipped.
+  const [injuries, setInjuries] = useState<boolean | null>(intake.injuries ?? null);
   const [role, setRole] = useState<Role | null>(self.declaredRole ?? null); // reporter's self-declared role (Party A triage)
   const [disagreed, setDisagreed] = useState(false); // "not agreed" — inline block
   const [loc, setLoc] = useState<LocationValue>({});
@@ -473,14 +479,15 @@ export default function PartyFlow({
                   <span className="font-bold">{t.injuryBlockTitle}</span>
                   <p className="text-sm text-muted-foreground">{t.injuryBlockBody}</p>
                   <Button asChild variant="destructive" className="h-14 w-full rounded-2xl text-base font-bold">
-                    <a href="tel:911">{t.call911}</a>
+                    <a href="tel:997">{t.call997}</a>
                   </Button>
                 </CardContent>
               </Card>
             )}
 
-            {/* Which driver is reporting — hidden when injuries=Yes (call-only). */}
-            {injuries !== true && (
+            {/* Which driver is reporting — hidden when injuries=Yes (call-only),
+                or when the voice call already captured the declared role. */}
+            {injuries !== true && !(intake.source === "hamsa" && self.declaredRole) && (
               <Card>
                 <CardHeader className="pb-2"><span className="font-bold">{t.whichDriverQ}</span></CardHeader>
                 <CardContent className="flex flex-col gap-3">

@@ -65,6 +65,23 @@ export interface ReportRow {
   accident: string; // JSON AccidentData (shared; Party A fills)
   properties: string; // JSON PropertyItem[] (legacy; unused in two-party flow)
   photoAnalysis: string; // JSON PhotoAnalysis | '' (empty = not run)
+  intake: string; // JSON IntakeData — how the report was minted (hamsa|manual)
+}
+
+// How the report was minted + what the voice call captured beyond the party
+// prefills. Webhook-minted reports carry source:"hamsa" and skip screens the
+// call already answered; seed/demo reports carry source:"manual".
+export interface IntakeData {
+  source: "hamsa" | "manual";
+  callId?: string;
+  injuries?: boolean;
+  accidentHints?: {
+    governorate?: string;
+    area?: string;
+    locationText?: string;
+    dateTime?: string;
+    accidentType?: string;
+  };
 }
 
 export interface LinkRow {

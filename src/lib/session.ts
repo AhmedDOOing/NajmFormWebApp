@@ -1,9 +1,13 @@
 import { DEFAULT_LINK_TTL_MS, HOST_BASE_URL } from "./config";
-import { audit, getReport, insertLink, insertReport, setParty } from "./db";
+import { audit, getReport, insertLink, insertReport, setIntake, setParty } from "./db";
 import { newReportId, newSlug } from "./slug";
-import type { DriverInfo, VehicleInfo } from "./types";
+import type { DriverInfo, IntakeData, VehicleInfo } from "./types";
 
-type PartyPrefill = { vehicle?: Partial<VehicleInfo>; driver?: Partial<DriverInfo> };
+type PartyPrefill = {
+  vehicle?: Partial<VehicleInfo>;
+  driver?: Partial<DriverInfo>;
+  declaredRole?: "affected" | "causer";
+};
 
 export interface CreateSessionInput {
   reportId?: string;
@@ -13,6 +17,9 @@ export interface CreateSessionInput {
   partyA?: PartyPrefill;
   partyB?: PartyPrefill;
   causer?: PartyPrefill; // legacy alias for partyA
+  // How this report was minted + call-captured extras. Defaults to manual
+  // (seed / demo landing) — the Hamsa webhook passes source:"hamsa".
+  intake?: IntakeData;
 }
 
 export interface CreateSessionResult {
@@ -45,13 +52,20 @@ export function createSession(
   // legacy `causer` alias). Party B is often just a phone number so we can text
   // them their link — that's fine, it prefills their form.
   const a = input.partyA ?? input.causer;
-  setParty(reportId, "A", { vehicle: a?.vehicle ?? {}, driver: a?.driver ?? {} });
+  setParty(reportId, "A", {
+    vehicle: a?.vehicle ?? {},
+    driver: a?.driver ?? {},
+    ...(a?.declaredRole ? { declaredRole: a.declaredRole } : {}),
+  });
   if (input.partyB)
     setParty(reportId, "B", {
       vehicle: input.partyB.vehicle ?? {},
       driver: input.partyB.driver ?? {},
     });
-  audit(reportId, "session_created", createdAt);
+  setIntake(reportId, input.intake ?? { source: "manual" });
+  audit(reportId, "session_created", createdAt, {
+    detail: `source:${input.intake?.source ?? "manual"}`,
+  });
 
   const slugA = newSlug();
   const slugB = newSlug();
