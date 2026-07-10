@@ -43,3 +43,6 @@ review) · property-only report (no affected party → completes immediately).
 ```bash
 rm -f data/najm.db*    # wipes reports, feed, SMS — /phone starts clean
 ```
+
+**Stop the dev server first** (then restart it): a running server keeps the deleted
+database file open and will silently continue using it.

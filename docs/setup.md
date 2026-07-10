@@ -58,3 +58,5 @@ rm -f data/najm.db data/najm.db-shm data/najm.db-wal
 ```
 
 The schema is recreated on the next request. `data/` is gitignored.
+**Stop the dev server before deleting** — a running server keeps the deleted file
+open and silently continues using it until restarted.

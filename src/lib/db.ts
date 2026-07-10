@@ -34,7 +34,23 @@ db.pragma("busy_timeout = 5000");
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 
-db.exec(`
+// Schema creation can still race when N build workers hit a brand-new DB file
+// at once; a short retry makes first-boot deterministic.
+function withRetry(fn: () => void, attempts = 5): void {
+  for (let i = 0; ; i++) {
+    try {
+      fn();
+      return;
+    } catch (e) {
+      const busy = e instanceof Error && /SQLITE_BUSY|database is locked/.test(e.message);
+      if (!busy || i >= attempts - 1) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100 * (i + 1));
+    }
+  }
+}
+
+withRetry(() =>
+  db.exec(`
   CREATE TABLE IF NOT EXISTS report (
     reportId   TEXT PRIMARY KEY,
     status     TEXT NOT NULL DEFAULT 'open',
@@ -109,27 +125,29 @@ db.exec(`
     error       TEXT,
     at          TEXT NOT NULL
   );
-`);
+`)
+);
 
 // --- lightweight migrations (add columns to pre-existing DBs) --------------
-{
-  const cols = db.prepare(`PRAGMA table_info(report)`).all() as { name: string }[];
-  const has = (n: string) => cols.some((c) => c.name === n);
-  // eTraffic model: the causer fills everything; content lives as JSON on the row.
-  if (!has("causer"))
-    db.exec(`ALTER TABLE report ADD COLUMN causer TEXT NOT NULL DEFAULT '{}'`);
-  if (!has("accident"))
-    db.exec(`ALTER TABLE report ADD COLUMN accident TEXT NOT NULL DEFAULT '{}'`);
-  if (!has("properties"))
-    db.exec(`ALTER TABLE report ADD COLUMN properties TEXT NOT NULL DEFAULT '[]'`);
-  // AI photo-analysis result (assistive; stored in the audit trail on the row).
-  if (!has("photoAnalysis"))
-    db.exec(`ALTER TABLE report ADD COLUMN photoAnalysis TEXT NOT NULL DEFAULT ''`);
-  // How the report was minted (hamsa webhook vs manual/seed) + call-captured
-  // extras beyond the causer's identity (injuries, other party's mobile, hints).
-  if (!has("intake"))
-    db.exec(`ALTER TABLE report ADD COLUMN intake TEXT NOT NULL DEFAULT '{}'`);
+// Concurrent processes can both see a column as missing and both ALTER (TOCTOU
+// — happens with next build's parallel workers on a fresh DB), so treat
+// "duplicate column name" as success instead of pre-checking.
+function addColumn(ddl: string): void {
+  try {
+    withRetry(() => db.exec(ddl));
+  } catch (e) {
+    if (!(e instanceof Error && /duplicate column name/i.test(e.message))) throw e;
+  }
 }
+// eTraffic model: the causer fills everything; content lives as JSON on the row.
+addColumn(`ALTER TABLE report ADD COLUMN causer TEXT NOT NULL DEFAULT '{}'`);
+addColumn(`ALTER TABLE report ADD COLUMN accident TEXT NOT NULL DEFAULT '{}'`);
+addColumn(`ALTER TABLE report ADD COLUMN properties TEXT NOT NULL DEFAULT '[]'`);
+// AI photo-analysis result (assistive; stored in the audit trail on the row).
+addColumn(`ALTER TABLE report ADD COLUMN photoAnalysis TEXT NOT NULL DEFAULT ''`);
+// How the report was minted (hamsa webhook vs manual/seed) + call-captured
+// extras beyond the causer's identity (injuries, other party's mobile, hints).
+addColumn(`ALTER TABLE report ADD COLUMN intake TEXT NOT NULL DEFAULT '{}'`);
 
 // --- report ---------------------------------------------------------------
 
