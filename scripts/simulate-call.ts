@@ -71,7 +71,7 @@ async function main() {
         causer_mobile: "+966551234567",
         plate_number: "1234",
         registration_type: "PRIVATE",
-        vehicle_nationality: "سعودية · Saudi",
+        vehicle_nationality: "السعودية · Saudi Arabia",
         identity_type: "الهوية الوطنية · National ID",
         email: "mohammed@example.com",
         injuries: "no",
