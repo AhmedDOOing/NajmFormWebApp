@@ -107,12 +107,15 @@ export default function AddAffectedDialog({
   open,
   onOpenChange,
   onAdd,
+  defaultMobile,
 }: {
   lang: Lang;
   title: string;
   open: boolean;
   onOpenChange: (o: boolean) => void;
   onAdd: (e: AffectedEntry) => void;
+  // The other party's mobile captured on the voice call — pre-fills the field.
+  defaultMobile?: string;
 }) {
   const t = dict[lang];
   const [vNationality, setVNationality] = useState("");
@@ -121,14 +124,14 @@ export default function AddAffectedDialog({
   const [idType, setIdType] = useState("");
   const [idNumber, setIdNumber] = useState("");
   const [name, setName] = useState("");
-  const [mobile, setMobile] = useState("");
+  const [mobile, setMobile] = useState(defaultMobile ?? "");
   const [email, setEmail] = useState("");
 
   const filled = vNationality && vNumber && vReg && idType && idNumber && name && mobile && email;
 
   function reset() {
     setVNationality(""); setVNumber(""); setVReg("");
-    setIdType(""); setIdNumber(""); setName(""); setMobile(""); setEmail("");
+    setIdType(""); setIdNumber(""); setName(""); setMobile(defaultMobile ?? ""); setEmail("");
   }
 
   return (

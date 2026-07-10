@@ -3,10 +3,10 @@ import { z } from "zod";
 import { causerSubmitSchema } from "@/lib/schema";
 import {
   audit,
-  getAffected,
   getLink,
   getReport,
   insertAffected,
+  insertFeedEvent,
   setAccident,
   setCauser,
   setProperties,
@@ -15,9 +15,10 @@ import {
 } from "@/lib/db";
 import { mergeFlags, routeOutcome } from "@/lib/flags";
 import { deriveAiFlags } from "@/lib/photoAnalysis";
+import { sendSms, SMS_TEMPLATES } from "@/lib/sms";
 import { newSlug } from "@/lib/slug";
 import { HOST_BASE_URL } from "@/lib/config";
-import type { CauserData, Flag, PhotoAnalysis } from "@/lib/types";
+import type { CauserData, Flag, IntakeData, PhotoAnalysis } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -70,9 +71,13 @@ export async function POST(
   setAccident(params.reportId, body.accident);
   setProperties(params.reportId, body.properties);
 
-  // Insert affected parties (added by lookup) + mint an ack link for each.
+  // Insert affected parties (added by lookup) + mint an ack link for each, and
+  // SMS it to them (simulated or real — never blocks the request; failures are
+  // recorded on the sms_message row and surface on /phone).
+  const intake = JSON.parse(report.intake || "{}") as Partial<IntakeData>;
   const affectedUrls: { url: string; name?: string }[] = [];
-  body.affected.forEach((a, i) => {
+  for (let i = 0; i < body.affected.length; i++) {
+    const a = body.affected[i];
     const ackSlug = newSlug();
     insertAffected({
       reportId: params.reportId,
@@ -83,8 +88,29 @@ export async function POST(
       lookupFailed: !!a.lookupFailed,
       addedAt: at,
     });
-    affectedUrls.push({ url: `${HOST_BASE_URL}/r/${ackSlug}`, name: a.driver.fullName });
-  });
+    const url = `${HOST_BASE_URL}/r/${ackSlug}`;
+    affectedUrls.push({ url, name: a.driver.fullName });
+
+    const toNumber = a.driver.mobile || intake.otherPartyMobile;
+    if (toNumber) {
+      const sms = await sendSms({
+        reportId: params.reportId,
+        toParty: "affected",
+        toNumber,
+        body: SMS_TEMPLATES.affectedAck(params.reportId, url),
+        linkUrl: url,
+      });
+      insertFeedEvent({
+        kind: "action",
+        callId: intake.callId,
+        eventType: "sms_affected",
+        reportId: params.reportId,
+        summary: `Ack link SMS → ${a.driver.fullName || toNumber} (${sms.provider}: ${sms.status})`,
+        payload: { toNumber, url, provider: sms.provider, status: sms.status, error: sms.error },
+        at: new Date().toISOString(),
+      });
+    }
+  }
 
   // Compute flags.
   const flags: Flag[] = [];
@@ -120,6 +146,15 @@ export async function POST(
     detail: `affected:${body.affected.length} properties:${body.properties.length}`,
   });
   audit(params.reportId, "fault_declaration_signed", at, { party: "A" });
+  insertFeedEvent({
+    kind: "action",
+    callId: intake.callId,
+    eventType: "report_filed",
+    reportId: params.reportId,
+    summary: `Causer filed ${params.reportId} — status ${status}, ${body.affected.length} affected, ${body.properties.length} properties`,
+    payload: { status, flags: merged, routing },
+    at,
+  });
 
   return NextResponse.json({
     ok: true,

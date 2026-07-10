@@ -1,6 +1,12 @@
 import { cookies } from "next/headers";
 import { getAffectedByAckSlug, getLink, getReport } from "@/lib/db";
-import type { AccidentData, CauserData, PropertyItem, VehicleInfo } from "@/lib/types";
+import type {
+  AccidentData,
+  CauserData,
+  IntakeData,
+  PropertyItem,
+  VehicleInfo,
+} from "@/lib/types";
 import { langCookieName, parseLocale } from "@/lib/locale";
 import CauserFlow from "@/components/CauserFlow";
 import AffectedAck from "@/components/AffectedAck";
@@ -21,11 +27,13 @@ export default function ShortLinkPage({ params }: { params: { slug: string } }) 
     if (!report || report.status === "expired")
       return <RecoveryPage reason="expired" reportId={causerLink.reportId} />;
     const saved = parseLocale(cookies().get(langCookieName(report.reportId, "A"))?.value);
+    const intake = JSON.parse(report.intake || "{}") as Partial<IntakeData>;
     return (
       <CauserFlow
         reportId={report.reportId}
         slug={causerLink.slug}
         causer={JSON.parse(report.causer || "{}") as CauserData}
+        intake={{ source: intake.source ?? "manual", ...intake }}
         initialLang={saved}
       />
     );

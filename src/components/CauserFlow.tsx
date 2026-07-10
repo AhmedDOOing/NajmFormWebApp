@@ -2,7 +2,13 @@
 
 import { useState } from "react";
 import { toast } from "sonner";
-import type { CauserData, Locale, PhotoAnalysis, PropertyItem } from "@/lib/types";
+import type {
+  CauserData,
+  IntakeData,
+  Locale,
+  PhotoAnalysis,
+  PropertyItem,
+} from "@/lib/types";
 import { dict, type Lang, type Dict } from "@/lib/i18n";
 import { setLangCookie } from "@/lib/locale";
 import {
@@ -192,16 +198,21 @@ export default function CauserFlow({
   reportId,
   slug,
   causer,
+  intake,
   initialLang,
 }: {
   reportId: string;
   slug: string;
   causer: CauserData;
+  intake: IntakeData;
   initialLang: Locale | null;
 }) {
+  // Webhook-minted links open straight into the causer flow — the voice agent
+  // already established who's filing. Manual/demo links keep the role chooser.
+  const fromCall = intake.source === "hamsa";
   const [locale, setLocale] = useState<Locale | null>(initialLang);
   const [step, setStep] = useState<Step>("triage");
-  const [role, setRole] = useState<Role | null>(null);
+  const [role, setRole] = useState<Role | null>(fromCall ? "causer" : null);
   // Causer details — entered by the causer (pre-filled from the call if captured).
   const [cvNationality, setCvNationality] = useState(causer.vehicle?.nationality ?? "");
   const [cvNumber, setCvNumber] = useState(causer.vehicle?.number ?? "");
@@ -218,14 +229,17 @@ export default function CauserFlow({
   const [affOpen, setAffOpen] = useState(false);
   const [propOpen, setPropOpen] = useState(false);
 
-  // accident details
-  const [date, setDate] = useState("");
-  const [time, setTime] = useState("");
+  // accident details — date/time pre-split from the call-captured hint if any.
+  const hintDateTime = intake.accidentHints?.dateTime ?? "";
+  const [date, setDate] = useState(hintDateTime.slice(0, 10));
+  const [time, setTime] = useState(/T\d{2}:\d{2}/.test(hintDateTime) ? hintDateTime.slice(11, 16) : "");
   const [photoCount, setPhotoCount] = useState(0);
   // Actual image bytes (base64) held in memory to POST to server-side analysis.
   // Never uploaded/persisted as raw files — sent once to /analyze, then dropped.
   const [photos, setPhotos] = useState<PhotoData[]>([]);
-  const [injuries, setInjuries] = useState<boolean | null>(null);
+  // Injury triage stays on screen even when the call captured it — the driver
+  // confirms; it's pre-selected, never silently skipped.
+  const [injuries, setInjuries] = useState<boolean | null>(intake.injuries ?? null);
   const [loc, setLoc] = useState<LocationValue>({});
 
   const [accepted, setAccepted] = useState(false);
@@ -402,7 +416,8 @@ export default function CauserFlow({
             </Card>
 
             {/* injuries=Yes -> the choosing section is replaced by a call button.
-                injuries=No/unset -> the "which driver" selection stays. */}
+                injuries=No/unset -> the "which driver" selection stays — unless
+                the link came from the voice call (role already established). */}
             {injuries === true ? (
               <Card className="border-t-4 border-t-destructive">
                 <CardContent className="flex flex-col items-center gap-4 pt-5 text-center">
@@ -416,7 +431,7 @@ export default function CauserFlow({
                   </a>
                 </CardContent>
               </Card>
-            ) : (
+            ) : fromCall ? null : (
               <Card className="border-t-4 border-t-primary">
                 <CardHeader className="pb-2">
                   <span className="font-semibold">{t.whichDriverQ}</span>
@@ -763,6 +778,7 @@ export default function CauserFlow({
         open={affOpen}
         onOpenChange={setAffOpen}
         onAdd={(e) => setAffected((p) => [...p, e])}
+        defaultMobile={intake.otherPartyMobile}
       />
       <AddPropertyDialog lang={locale} open={propOpen} onOpenChange={setPropOpen} onAdd={(p) => setProperties((prev) => [...prev, p])} />
     </div>

@@ -4,6 +4,7 @@ import {
   audit,
   getAffected,
   getAffectedByAckSlug,
+  insertFeedEvent,
   setAck,
   setReportFlags,
   setReportStatus,
@@ -52,6 +53,16 @@ export async function POST(
   else if (allAccepted) status = "complete";
   else status = "filed";
   setReportStatus(row.reportId, status as never);
+
+  const driver = JSON.parse(row.driver) as { fullName?: string };
+  insertFeedEvent({
+    kind: "action",
+    eventType: `ack_${decision}`,
+    reportId: row.reportId,
+    summary: `${driver.fullName || `Affected #${row.idx + 1}`} ${decision} the fault admission — report ${status}`,
+    payload: { decision, status, routing },
+    at,
+  });
 
   return NextResponse.json({ ok: true, decision, status, routing });
 }
