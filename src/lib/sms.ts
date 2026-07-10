@@ -27,6 +27,13 @@ export interface SendSmsResult {
 export const SMS_TEMPLATES = {
   partyLink: (reportId: string, url: string) =>
     `نجم: أكمل بيانات بلاغ الحادث ${reportId} عبر الرابط\nNajm: complete your side of accident report ${reportId}\n${url}`,
+  // Confirmation sent to a party right after they submit their section.
+  partyReceived: (reportId: string) =>
+    `نجم: ✅ تم استلام بياناتك لبلاغ الحادث ${reportId}. بانتظار الطرف الآخر لإكمال بياناته.\nNajm: ✅ we received your details for report ${reportId}. Waiting on the other party.`,
+  reportComplete: (reportId: string) =>
+    `نجم: ✅ اكتمل بلاغ الحادث ${reportId} — تم استلام بيانات الطرفين. شكراً لك.\nNajm: ✅ accident report ${reportId} is complete — both parties submitted. Thank you.`,
+  reportEscalated: (reportId: string) =>
+    `نجم: تم استلام بلاغ الحادث ${reportId} وسيُحوّل للمراجعة اليدوية. سنتواصل معك.\nNajm: report ${reportId} received and routed for manual review. We'll be in touch.`,
 } as const;
 
 const twilioConfigured = () =>
