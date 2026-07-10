@@ -144,6 +144,33 @@ export async function POST(
     });
   }
 
+  // Confirmation "text" to the party who just finished — shows up as a bubble in
+  // their own phone frame on /phone. Wording tracks the resulting status.
+  const selfMobile = data.driver?.mobile;
+  if (selfMobile) {
+    const body =
+      status === "complete"
+        ? SMS_TEMPLATES.reportComplete(params.reportId)
+        : status === "escalated"
+        ? SMS_TEMPLATES.reportEscalated(params.reportId)
+        : SMS_TEMPLATES.partyReceived(params.reportId);
+    const sms = await sendSms({
+      reportId: params.reportId,
+      toParty: party,
+      toNumber: selfMobile,
+      body,
+    });
+    insertFeedEvent({
+      kind: "action",
+      callId: intake.callId,
+      eventType: status === "complete" ? "report_complete" : "party_confirmed",
+      reportId: params.reportId,
+      summary: `Confirmation SMS → Party ${party} ${selfMobile} (${status})`,
+      payload: { toNumber: selfMobile, status, provider: sms.provider, smsStatus: sms.status },
+      at: new Date().toISOString(),
+    });
+  }
+
   return NextResponse.json({
     ok: true,
     reportId: params.reportId,

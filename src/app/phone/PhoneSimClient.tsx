@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
   Activity,
   Bot,
+  CheckCircle2,
   Link2,
   MessageSquareText,
   PhoneCall,
@@ -56,6 +57,8 @@ const EVENT_STYLE: Record<string, { icon: typeof Radio; tone: string; label: str
   sms_partyA: { icon: Send, tone: "text-primary border-primary/50", label: "sms" },
   sms_partyB: { icon: Send, tone: "text-primary border-primary/50", label: "sms" },
   party_submitted: { icon: Activity, tone: "text-primary border-primary/50", label: "action" },
+  party_confirmed: { icon: Send, tone: "text-primary border-primary/50", label: "sms" },
+  report_complete: { icon: CheckCircle2, tone: "text-emerald-400 border-emerald-500/50", label: "complete" },
 };
 
 const timeOf = (iso: string) =>
