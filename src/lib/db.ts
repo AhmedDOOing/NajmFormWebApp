@@ -28,12 +28,30 @@ const g = globalThis as unknown as { __najmDb?: Database.Database };
 export const db: Database.Database = g.__najmDb ?? new Database(dbPath);
 g.__najmDb = db;
 
+// Retry (rather than throw SQLITE_BUSY) when another connection holds the write
+// lock briefly — matters when several processes open the dev DB file at once
+// (e.g. next build page-data workers). Must be set BEFORE journal_mode, which
+// itself needs a write lock.
+db.pragma("busy_timeout = 5000");
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
-// Retry (rather than throw SQLITE_BUSY) when another connection holds the write
-// lock briefly — matters if more than one process opens the dev DB file.
-db.pragma("busy_timeout = 5000");
 
+// Schema creation can still race when N build workers hit a brand-new DB file
+// at once; a short retry makes first-boot deterministic.
+function withRetry(fn: () => void, attempts = 5): void {
+  for (let i = 0; ; i++) {
+    try {
+      fn();
+      return;
+    } catch (e) {
+      const busy = e instanceof Error && /SQLITE_BUSY|database is locked/.test(e.message);
+      if (!busy || i >= attempts - 1) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100 * (i + 1));
+    }
+  }
+}
+
+withRetry(() =>
 db.exec(`
   CREATE TABLE IF NOT EXISTS report (
     reportId   TEXT PRIMARY KEY,
@@ -110,35 +128,67 @@ db.exec(`
     PRIMARY KEY (reportId, idx)
   );
   CREATE INDEX IF NOT EXISTS idx_affected_report ON affected(reportId);
-`);
+
+  -- Live demo feed: every incoming webhook + every action the server took.
+  -- Append-only; the /phone simulator polls this with an id cursor.
+  CREATE TABLE IF NOT EXISTS feed_event (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind       TEXT NOT NULL,             -- 'webhook' | 'action'
+    callId     TEXT,                      -- Hamsa callId (webhook rows)
+    eventType  TEXT,                      -- call.started|call.ended|...|link_minted|party_submitted
+    reportId   TEXT,
+    summary    TEXT NOT NULL,             -- human one-liner for the feed panel
+    payload    TEXT NOT NULL DEFAULT '{}',-- raw webhook JSON / action detail
+    at         TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_feed_call ON feed_event(callId);
+
+  -- SMS outbox (real Twilio send or simulated). The /phone page groups these
+  -- into phone frames by toNumber.
+  CREATE TABLE IF NOT EXISTS sms_message (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    reportId    TEXT,
+    toParty     TEXT NOT NULL,            -- 'A' | 'B'
+    toNumber    TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    linkUrl     TEXT,
+    provider    TEXT NOT NULL,            -- 'simulated' | 'twilio'
+    providerSid TEXT,
+    status      TEXT NOT NULL,            -- 'simulated' | 'queued' | 'sent' | 'failed'
+    error       TEXT,
+    at          TEXT NOT NULL
+  );
+`)
+);
 
 // --- lightweight migrations (add columns to pre-existing DBs) --------------
 // Single-device handover state lives on the report: `phase` drives the zone
 // edit-locks (partyA -> handover -> partyB -> complete); `verifyAttempts`
 // tracks Party-B identity retries.
-{
-  const cols = db.prepare(`PRAGMA table_info(report)`).all() as { name: string }[];
-  const has = (n: string) => cols.some((c) => c.name === n);
-  if (!has("phase"))
-    db.exec(`ALTER TABLE report ADD COLUMN phase TEXT NOT NULL DEFAULT 'partyA'`);
-  if (!has("verifyAttempts"))
-    db.exec(`ALTER TABLE report ADD COLUMN verifyAttempts INTEGER NOT NULL DEFAULT 0`);
-  // eTraffic model: the causer fills everything; content lives as JSON on the row.
-  if (!has("causer"))
-    db.exec(`ALTER TABLE report ADD COLUMN causer TEXT NOT NULL DEFAULT '{}'`);
-  if (!has("accident"))
-    db.exec(`ALTER TABLE report ADD COLUMN accident TEXT NOT NULL DEFAULT '{}'`);
-  if (!has("properties"))
-    db.exec(`ALTER TABLE report ADD COLUMN properties TEXT NOT NULL DEFAULT '[]'`);
-  // AI photo-analysis result (assistive; stored in the audit trail on the row).
-  if (!has("photoAnalysis"))
-    db.exec(`ALTER TABLE report ADD COLUMN photoAnalysis TEXT NOT NULL DEFAULT ''`);
-  // Neutral two-party model: each party's own section (vehicle + driver).
-  if (!has("partyA"))
-    db.exec(`ALTER TABLE report ADD COLUMN partyA TEXT NOT NULL DEFAULT '{}'`);
-  if (!has("partyB"))
-    db.exec(`ALTER TABLE report ADD COLUMN partyB TEXT NOT NULL DEFAULT '{}'`);
+// Concurrent processes can both see a column as missing and both ALTER (TOCTOU
+// — happens with next build's parallel workers on a fresh DB), so treat
+// "duplicate column name" as success instead of pre-checking.
+function addColumn(ddl: string): void {
+  try {
+    withRetry(() => db.exec(ddl));
+  } catch (e) {
+    if (!(e instanceof Error && /duplicate column name/i.test(e.message))) throw e;
+  }
 }
+addColumn(`ALTER TABLE report ADD COLUMN phase TEXT NOT NULL DEFAULT 'partyA'`);
+addColumn(`ALTER TABLE report ADD COLUMN verifyAttempts INTEGER NOT NULL DEFAULT 0`);
+// eTraffic-era content columns (kept for compatibility with existing dev DBs).
+addColumn(`ALTER TABLE report ADD COLUMN causer TEXT NOT NULL DEFAULT '{}'`);
+addColumn(`ALTER TABLE report ADD COLUMN accident TEXT NOT NULL DEFAULT '{}'`);
+addColumn(`ALTER TABLE report ADD COLUMN properties TEXT NOT NULL DEFAULT '[]'`);
+// AI photo-analysis result (assistive; stored in the audit trail on the row).
+addColumn(`ALTER TABLE report ADD COLUMN photoAnalysis TEXT NOT NULL DEFAULT ''`);
+// Neutral two-party model: each party's own section (vehicle + driver).
+addColumn(`ALTER TABLE report ADD COLUMN partyA TEXT NOT NULL DEFAULT '{}'`);
+addColumn(`ALTER TABLE report ADD COLUMN partyB TEXT NOT NULL DEFAULT '{}'`);
+// How the report was minted (hamsa webhook vs manual/seed) + call-captured
+// extras (injuries, accident hints) for prefill.
+addColumn(`ALTER TABLE report ADD COLUMN intake TEXT NOT NULL DEFAULT '{}'`);
 
 // --- report ---------------------------------------------------------------
 
@@ -371,6 +421,134 @@ export function recordConsent(reportId: string, party: Party, at: string): void 
     `INSERT INTO consent (reportId, party, grantedAt) VALUES (?, ?, ?)
      ON CONFLICT(reportId, party) DO NOTHING`
   ).run(reportId, party, at);
+}
+
+// --- intake (how the report was minted + call-captured extras) -------------
+
+export function setIntake(reportId: string, intake: object): void {
+  db.prepare(`UPDATE report SET intake = ? WHERE reportId = ?`).run(
+    JSON.stringify(intake),
+    reportId
+  );
+}
+
+// --- feed (live webhook/action stream for the /phone simulator) ------------
+
+export interface FeedEventRow {
+  id: number;
+  kind: "webhook" | "action";
+  callId: string | null;
+  eventType: string | null;
+  reportId: string | null;
+  summary: string;
+  payload: string; // JSON
+  at: string;
+}
+
+export function insertFeedEvent(e: {
+  kind: "webhook" | "action";
+  callId?: string;
+  eventType?: string;
+  reportId?: string;
+  summary: string;
+  payload?: object;
+  at: string;
+}): number {
+  const res = db
+    .prepare(
+      `INSERT INTO feed_event (kind, callId, eventType, reportId, summary, payload, at)
+       VALUES (@kind, @callId, @eventType, @reportId, @summary, @payload, @at)`
+    )
+    .run({
+      kind: e.kind,
+      callId: e.callId ?? null,
+      eventType: e.eventType ?? null,
+      reportId: e.reportId ?? null,
+      summary: e.summary,
+      payload: JSON.stringify(e.payload ?? {}),
+      at: e.at,
+    });
+  return Number(res.lastInsertRowid);
+}
+
+export function getFeedSince(sinceId: number): FeedEventRow[] {
+  return db
+    .prepare(`SELECT * FROM feed_event WHERE id > ? ORDER BY id`)
+    .all(sinceId) as FeedEventRow[];
+}
+
+// Idempotency: has this Hamsa call already minted a report? Returns the
+// earlier action row (its reportId) if so.
+export function findMintedByCallId(callId: string): FeedEventRow | undefined {
+  return db
+    .prepare(
+      `SELECT * FROM feed_event
+       WHERE callId = ? AND kind = 'action' AND eventType = 'link_minted'
+       ORDER BY id LIMIT 1`
+    )
+    .get(callId) as FeedEventRow | undefined;
+}
+
+// --- sms outbox -------------------------------------------------------------
+
+export interface SmsRow {
+  id: number;
+  reportId: string | null;
+  toParty: "A" | "B";
+  toNumber: string;
+  body: string;
+  linkUrl: string | null;
+  provider: "simulated" | "twilio";
+  providerSid: string | null;
+  status: "simulated" | "queued" | "sent" | "failed";
+  error: string | null;
+  at: string;
+}
+
+export function insertSms(s: {
+  reportId?: string;
+  toParty: "A" | "B";
+  toNumber: string;
+  body: string;
+  linkUrl?: string;
+  provider: "simulated" | "twilio";
+  providerSid?: string;
+  status: "simulated" | "queued" | "sent" | "failed";
+  error?: string;
+  at: string;
+}): number {
+  const res = db
+    .prepare(
+      `INSERT INTO sms_message (reportId, toParty, toNumber, body, linkUrl, provider, providerSid, status, error, at)
+       VALUES (@reportId, @toParty, @toNumber, @body, @linkUrl, @provider, @providerSid, @status, @error, @at)`
+    )
+    .run({
+      reportId: s.reportId ?? null,
+      toParty: s.toParty,
+      toNumber: s.toNumber,
+      body: s.body,
+      linkUrl: s.linkUrl ?? null,
+      provider: s.provider,
+      providerSid: s.providerSid ?? null,
+      status: s.status,
+      error: s.error ?? null,
+      at: s.at,
+    });
+  return Number(res.lastInsertRowid);
+}
+
+export function getSmsSince(sinceId: number): SmsRow[] {
+  return db
+    .prepare(`SELECT * FROM sms_message WHERE id > ? ORDER BY id`)
+    .all(sinceId) as SmsRow[];
+}
+
+// Has this party already been texted their link for this report? (dedupe —
+// e.g. the webhook may have texted Party B at intake time already)
+export function hasSmsFor(reportId: string, toParty: "A" | "B"): boolean {
+  return !!db
+    .prepare(`SELECT 1 FROM sms_message WHERE reportId = ? AND toParty = ? LIMIT 1`)
+    .get(reportId, toParty);
 }
 
 // --- audit ----------------------------------------------------------------

@@ -6,6 +6,8 @@ import {
   getLink,
   getLinkForParty,
   getReport,
+  hasSmsFor,
+  insertFeedEvent,
   setAccident,
   setParty,
   setReportFlags,
@@ -13,9 +15,9 @@ import {
 } from "@/lib/db";
 import { mergeFlags, routeOutcome } from "@/lib/flags";
 import { deriveAiFlags } from "@/lib/photoAnalysis";
-import { broadcastFlags } from "@/lib/realtime";
+import { sendSms, SMS_TEMPLATES } from "@/lib/sms";
 import { baseUrlFromRequest } from "@/lib/config";
-import type { AccidentData, Flag, PartyData, PhotoAnalysis } from "@/lib/types";
+import type { AccidentData, Flag, IntakeData, PartyData, PhotoAnalysis } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -99,13 +101,48 @@ export async function POST(
   setReportStatus(params.reportId, status as never);
 
   audit(params.reportId, "party_submitted", at, { party, detail: `status:${status}` });
-  broadcastFlags(params.reportId, merged, status);
+
+  const intake = JSON.parse(report.intake || "{}") as Partial<IntakeData>;
+  insertFeedEvent({
+    kind: "action",
+    callId: intake.callId,
+    eventType: "party_submitted",
+    reportId: params.reportId,
+    summary: `Party ${party} submitted ${params.reportId} — status ${status}`,
+    payload: { party, status, flags: merged, routing },
+    at,
+  });
 
   // The other party's link to share so they can complete their own section.
-  const otherLink = getLinkForParty(params.reportId, party === "A" ? "B" : "A");
+  const other = party === "A" ? "B" : "A";
+  const otherLink = getLinkForParty(params.reportId, other);
   const otherPartyUrl = otherLink
     ? `${baseUrlFromRequest(req)}/r/${otherLink.slug}`
     : null;
+
+  // If the other party hasn't submitted, has a mobile on record, and was never
+  // texted (the webhook may have texted them at intake), SMS them their link.
+  // Never blocks: failures land on the sms_message row and surface on /phone.
+  const otherData = other === "A" ? partyA : partyB;
+  const otherMobile = otherData.driver?.mobile;
+  if (otherPartyUrl && !otherDone && otherMobile && !hasSmsFor(params.reportId, other)) {
+    const sms = await sendSms({
+      reportId: params.reportId,
+      toParty: other,
+      toNumber: otherMobile,
+      body: SMS_TEMPLATES.partyLink(params.reportId, otherPartyUrl),
+      linkUrl: otherPartyUrl,
+    });
+    insertFeedEvent({
+      kind: "action",
+      callId: intake.callId,
+      eventType: `sms_party${other}`,
+      reportId: params.reportId,
+      summary: `Party ${other} link SMS → ${otherMobile} (${sms.provider}: ${sms.status})`,
+      payload: { toNumber: otherMobile, provider: sms.provider, status: sms.status, error: sms.error },
+      at: new Date().toISOString(),
+    });
+  }
 
   return NextResponse.json({
     ok: true,
