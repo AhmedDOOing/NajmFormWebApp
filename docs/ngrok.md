@@ -6,16 +6,19 @@ dev server with ngrok.
 ## Steps
 
 ```bash
-# terminal 1 — start the tunnel
+# terminal 1 — start the app
+npm run dev
+
+# terminal 2 — start the tunnel
 ngrok http 3000
 # → Forwarding  https://abc123.ngrok-free.app -> http://localhost:3000
-
-# terminal 2 — start the app WITH the tunnel URL as its base
-NAJM_BASE_URL=https://abc123.ngrok-free.app npm run dev
 ```
 
-**`NAJM_BASE_URL` matters:** it's baked into every minted link and SMS body. Without
-it, the causer would receive `http://localhost:3000/r/…` — useless on a real phone.
+**How public URLs are chosen:** a webhook received through ngrok uses its incoming
+public host, so links minted from a real Hamsa call are automatically public. Set
+`NAJM_BASE_URL=https://abc123.ngrok-free.app` and restart the app when using
+`npm run simulate:call` through the tunnel or when a public fallback URL is needed.
+Do not use it in place of configuring Hamsa's webhook URL.
 
 Then configure the Hamsa agent (see [hamsa.md](hamsa.md)):
 

@@ -30,8 +30,9 @@ mobile was entered on the form).
 
 ## B. Real Hamsa call (via ngrok)
 
-1. `ngrok http 3000` → copy the https URL.
-2. `NAJM_BASE_URL=https://<tunnel> HAMSA_WEBHOOK_SECRET=<secret> npm run dev`
+1. Set `HAMSA_WEBHOOK_SECRET=<secret>` in `.env.local`, then run `npm run dev`.
+2. `ngrok http 3000` → copy the https URL. (Set `NAJM_BASE_URL=https://<tunnel>`
+   and restart only when the simulator should use the public URL.)
 3. Configure the Hamsa agent: webhook URL `https://<tunnel>/api/webhook/hamsa`,
    Bearer `<secret>`, and outcome fields per [hamsa.md](hamsa.md).
 4. Open `https://<tunnel>/phone` on the projector, **call the agent's number**, and

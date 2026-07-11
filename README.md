@@ -63,6 +63,12 @@ opens the real pre-filled flow. Full walkthrough: [docs/demo-script.md](docs/dem
 
 ## Docs
 
+- [docs/run-local-hamsa.md](docs/run-local-hamsa.md) — **operator runbook:** install, run, ngrok, Hamsa configuration, smoke test, demo, troubleshooting
+- [docs/flow.md](docs/flow.md) — architecture and end-to-end Mermaid flow diagrams
+- [docs/admin-operations.md](docs/admin-operations.md) — operational access, secret handling, incidents, and release checklist
+- [docs/task-list.md](docs/task-list.md) — prioritized POC-to-production delivery backlog
+- [docs/README.md](docs/README.md) — documentation ownership, versioning process, and PDF release procedure
+- [output/pdf/najm-poc-handoff.pdf](output/pdf/najm-poc-handoff.pdf) — portable documentation snapshot
 - [docs/setup.md](docs/setup.md) — install, run, seed, reset, page index
 - [docs/hamsa.md](docs/hamsa.md) — webhook contract + configuring the Hamsa agent
 - [docs/ngrok.md](docs/ngrok.md) — expose the webhook for real Hamsa calls

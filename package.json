@@ -9,7 +9,8 @@
     "start": "next start",
     "seed": "tsx scripts/seed.ts",
     "simulate:call": "tsx scripts/simulate-call.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "docs:pdf": "/Users/isa/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 scripts/generate-docs-pdf.py"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",
