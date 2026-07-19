@@ -6,3 +6,7 @@ data/*.db-*
 next-env.d.ts
 .DS_Store
 tsconfig.tsbuildinfo
+
+# local env with credentials — never commit
+.env.local
+.env*.local
